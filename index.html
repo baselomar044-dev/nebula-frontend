@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0a0a1a">
+  <meta name="description" content="Nebula AI - Ultra-fast ADHD-friendly AI coding assistant">
+  <title>✨ Nebula AI</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/styles/main.css">
+  <link rel="stylesheet" href="/styles/themes.css">
+</head>
+<body class="theme-dark">
+  <div id="app">
+    <!-- Loading Screen -->
+    <div id="loading" class="loading-screen">
+      <div class="loading-logo">✨</div>
+      <div class="loading-text" data-i18n="loading">Loading Nebula...</div>
+      <div class="loading-bar"><div class="loading-progress"></div></div>
+    </div>
+
+    <!-- Auth Screen -->
+    <div id="auth-screen" class="screen hidden">
+      <div class="auth-container">
+        <div class="auth-logo">✨</div>
+        <h1 class="auth-title">Nebula AI</h1>
+        <p class="auth-subtitle" data-i18n="authSubtitle">Your AI coding companion</p>
+        
+        <form id="auth-form" class="auth-form">
+          <div class="form-group">
+            <input type="email" id="auth-email" placeholder="Email" required>
+          </div>
+          <div class="form-group">
+            <input type="password" id="auth-password" placeholder="Password" required>
+          </div>
+          <div class="form-group hidden" id="auth-name-group">
+            <input type="text" id="auth-name" placeholder="Name">
+          </div>
+          <button type="submit" class="btn-primary" id="auth-submit">
+            <span data-i18n="login">Login</span>
+          </button>
+          <button type="button" class="btn-link" id="auth-toggle">
+            <span data-i18n="createAccount">Create account</span>
+          </button>
+        </form>
+        
+        <div class="auth-footer">
+          <button class="btn-icon" id="auth-lang-toggle" title="العربية">🌐</button>
+          <button class="btn-icon" id="auth-theme-toggle" title="Toggle theme">🌙</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="main-app" class="screen hidden">
+      <!-- Header -->
+      <header class="app-header">
+        <div class="header-left">
+          <button class="btn-icon" id="sidebar-toggle">☰</button>
+          <div class="logo">✨ <span class="logo-text">Nebula</span></div>
+        </div>
+        <div class="header-center">
+          <div class="project-name" id="current-project-name" data-i18n="noProject">No project</div>
+        </div>
+        <div class="header-right">
+          <button class="btn-icon" id="lang-toggle" title="العربية">🌐</button>
+          <button class="btn-icon" id="theme-toggle" title="Toggle theme">🌙</button>
+          <button class="btn-icon" id="settings-btn" title="Settings">⚙️</button>
+          <div class="user-menu" id="user-menu">
+            <span class="user-avatar" id="user-avatar">👤</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Main Content -->
+      <div class="app-content">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebar-section">
+            <div class="sidebar-header">
+              <span data-i18n="projects">Projects</span>
+              <button class="btn-small" id="new-project-btn">+</button>
+            </div>
+            <div class="project-list" id="project-list"></div>
+          </div>
+          
+          <div class="sidebar-section">
+            <div class="sidebar-header">
+              <span data-i18n="files">Files</span>
+              <button class="btn-small" id="upload-btn">📁</button>
+            </div>
+            <div class="file-tree" id="file-tree"></div>
+          </div>
+          
+          <div class="sidebar-actions">
+            <button class="btn-secondary" id="import-btn">
+              <span>📥</span> <span data-i18n="import">Import</span>
+            </button>
+            <button class="btn-secondary" id="export-btn">
+              <span>📤</span> <span data-i18n="export">Export</span>
+            </button>
+          </div>
+        </aside>
+
+        <!-- Main Area -->
+        <main class="main-area">
+          <!-- Welcome / Empty State -->
+          <div class="welcome-state" id="welcome-state">
+            <div class="welcome-icon">✨</div>
+            <h2 data-i18n="welcomeTitle">Welcome to Nebula</h2>
+            <p data-i18n="welcomeText">Create a project or import one to get started</p>
+            <div class="welcome-actions">
+              <button class="btn-primary" id="welcome-new-project">
+                <span data-i18n="newProject">New Project</span>
+              </button>
+              <button class="btn-secondary" id="welcome-import">
+                <span data-i18n="importProject">Import Project</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Editor Area -->
+          <div class="editor-area hidden" id="editor-area">
+            <div class="editor-tabs" id="editor-tabs"></div>
+            <div class="editor-content" id="editor-content">
+              <textarea id="code-editor" spellcheck="false"></textarea>
+            </div>
+          </div>
+
+          <!-- Preview Area -->
+          <div class="preview-area hidden" id="preview-area">
+            <div class="preview-header">
+              <span data-i18n="livePreview">Live Preview</span>
+              <button class="btn-small" id="preview-refresh">🔄</button>
+              <button class="btn-small" id="preview-close">✕</button>
+            </div>
+            <iframe id="preview-frame" sandbox="allow-scripts allow-same-origin"></iframe>
+          </div>
+        </main>
+
+        <!-- AI Chat Panel -->
+        <aside class="chat-panel" id="chat-panel">
+          <div class="chat-header">
+            <span data-i18n="aiAssistant">AI Assistant</span>
+            <div class="chat-model" id="chat-model">Auto</div>
+          </div>
+          
+          <div class="chat-messages" id="chat-messages">
+            <div class="chat-welcome">
+              <div class="chat-welcome-icon">🤖</div>
+              <p data-i18n="chatWelcome">Hi! I'm Nebula AI. Tell me what you want to build or fix.</p>
+            </div>
+          </div>
+          
+          <div class="chat-input-area">
+            <div class="chat-attachments" id="chat-attachments"></div>
+            <div class="chat-input-row">
+              <button class="btn-icon" id="attach-file-btn" title="Attach file">📎</button>
+              <button class="btn-icon" id="attach-image-btn" title="Attach image">🖼️</button>
+              <textarea id="chat-input" placeholder="Describe what you want..." rows="1"></textarea>
+              <button class="btn-primary" id="send-btn">➤</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- Bottom Bar -->
+      <footer class="app-footer">
+        <div class="footer-left">
+          <span class="status-indicator" id="status-indicator">●</span>
+          <span class="status-text" id="status-text" data-i18n="ready">Ready</span>
+        </div>
+        <div class="footer-center">
+          <button class="btn-small" id="preview-toggle" data-i18n="preview">Preview</button>
+          <button class="btn-small btn-deploy" id="deploy-btn" data-i18n="deploy">Deploy</button>
+        </div>
+        <div class="footer-right">
+          <span class="usage-info" id="usage-info">$0.00</span>
+        </div>
+      </footer>
+    </div>
+
+    <!-- Modals -->
+    <div class="modal hidden" id="settings-modal">
+      <div class="modal-content modal-large">
+        <div class="modal-header">
+          <h2 data-i18n="settings">Settings</h2>
+          <button class="btn-icon modal-close">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="settings-tabs">
+            <button class="tab active" data-tab="api-keys" data-i18n="apiKeys">API Keys</button>
+            <button class="tab" data-tab="deploy-tokens" data-i18n="deployTokens">Deploy</button>
+            <button class="tab" data-tab="preferences" data-i18n="preferences">Preferences</button>
+          </div>
+          
+          <div class="settings-content" id="settings-api-keys">
+            <div class="setting-group">
+              <label>Anthropic (Claude)</label>
+              <input type="password" id="key-anthropic" placeholder="sk-ant-...">
+            </div>
+            <div class="setting-group">
+              <label>OpenAI (GPT)</label>
+              <input type="password" id="key-openai" placeholder="sk-...">
+            </div>
+            <div class="setting-group">
+              <label>Google (Gemini)</label>
+              <input type="password" id="key-google" placeholder="AIza...">
+            </div>
+            <div class="setting-group">
+              <label>Groq (Llama)</label>
+              <input type="password" id="key-groq" placeholder="gsk_...">
+            </div>
+            <div class="setting-group">
+              <label>DeepSeek</label>
+              <input type="password" id="key-deepseek" placeholder="sk-...">
+            </div>
+          </div>
+          
+          <div class="settings-content hidden" id="settings-deploy-tokens">
+            <div class="setting-group">
+              <label>Vercel</label>
+              <input type="password" id="token-vercel" placeholder="Token...">
+            </div>
+            <div class="setting-group">
+              <label>Netlify</label>
+              <input type="password" id="token-netlify" placeholder="nfp_...">
+            </div>
+            <div class="setting-group">
+              <label>Railway</label>
+              <input type="password" id="token-railway" placeholder="Token...">
+            </div>
+          </div>
+          
+          <div class="settings-content hidden" id="settings-preferences">
+            <div class="setting-group">
+              <label data-i18n="language">Language</label>
+              <select id="pref-language">
+                <option value="en">English</option>
+                <option value="ar">العربية</option>
+              </select>
+            </div>
+            <div class="setting-group">
+              <label data-i18n="theme">Theme</label>
+              <select id="pref-theme">
+                <option value="dark">Dark (Blue Stars)</option>
+                <option value="light">Light (Beige/Green)</option>
+              </select>
+            </div>
+            <div class="setting-group">
+              <label data-i18n="aiModel">Default AI Model</label>
+              <select id="pref-model">
+                <option value="auto">Auto (Best value)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary modal-close" data-i18n="cancel">Cancel</button>
+          <button class="btn-primary" id="save-settings" data-i18n="save">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="new-project-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 data-i18n="newProject">New Project</h2>
+          <button class="btn-icon modal-close">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="setting-group">
+            <label data-i18n="projectName">Project Name</label>
+            <input type="text" id="new-project-name" placeholder="My App">
+          </div>
+          <div class="setting-group">
+            <label data-i18n="description">Description</label>
+            <textarea id="new-project-desc" rows="2"></textarea>
+          </div>
+          <div class="setting-group">
+            <label data-i18n="framework">Framework</label>
+            <select id="new-project-framework">
+              <option value="">None</option>
+              <option value="vanilla">Vanilla JS</option>
+              <option value="react">React</option>
+              <option value="vue">Vue</option>
+              <option value="svelte">Svelte</option>
+              <option value="node">Node.js</option>
+              <option value="python">Python</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary modal-close" data-i18n="cancel">Cancel</button>
+          <button class="btn-primary" id="create-project" data-i18n="create">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="deploy-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 data-i18n="deployProject">Deploy Project</h2>
+          <button class="btn-icon modal-close">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="deploy-options">
+            <button class="deploy-option" data-platform="vercel">
+              <span class="deploy-icon">▲</span>
+              <span>Vercel</span>
+            </button>
+            <button class="deploy-option" data-platform="netlify">
+              <span class="deploy-icon">◆</span>
+              <span>Netlify</span>
+            </button>
+            <button class="deploy-option" data-platform="railway">
+              <span class="deploy-icon">🚂</span>
+              <span>Railway</span>
+            </button>
+          </div>
+          <div class="deploy-status hidden" id="deploy-status">
+            <div class="deploy-progress"></div>
+            <p class="deploy-message" id="deploy-message"></p>
+            <a class="deploy-url hidden" id="deploy-url" target="_blank"></a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hidden file inputs -->
+    <input type="file" id="import-input" accept=".zip" hidden>
+    <input type="file" id="upload-input" multiple hidden>
+    <input type="file" id="image-input" accept="image/*" hidden>
+  </div>
+
+  <script src="/config.js"></script>
+  <script src="/utils/api.js"></script>
+  <script src="/utils/i18n.js"></script>
+  <script src="/utils/storage.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
