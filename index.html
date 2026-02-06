@@ -2,167 +2,143 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#0a0a1a">
-  <title>✨ Nebula AI</title>
-  <link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
-  <link rel="stylesheet" href="/styles/main.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="app">
-    <!-- Left Panel Toggle -->
-    <button class="panel-toggle left-toggle" id="leftToggle" title="Files & Projects">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-      </svg>
-    </button>
-
-    <!-- Right Panel Toggle -->
-    <button class="panel-toggle right-toggle" id="rightToggle" title="Live Preview">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-        <line x1="8" y1="21" x2="16" y2="21"/>
-        <line x1="12" y1="17" x2="12" y2="21"/>
-      </svg>
-    </button>
-
-    <!-- LEFT PANEL - Files & Projects -->
-    <aside class="side-panel left-panel" id="leftPanel">
-      <div class="panel-header">
-        <h2>📁 Files</h2>
-        <button class="panel-close" id="leftClose">×</button>
+    <!-- Top Bar -->
+    <header>
+      <div class="left">
+        <button onclick="toggle('files')" title="Files">☰</button>
+        <select id="projectSelect" onchange="loadProject(this.value)">
+          <option value="new">+ New Project</option>
+        </select>
       </div>
-      <div class="panel-content">
-        <!-- Project Selector -->
-        <div class="project-selector">
-          <select id="projectSelect">
-            <option value="">Select Project...</option>
-          </select>
-          <button class="btn-icon" id="newProjectBtn" title="New Project">+</button>
-        </div>
-        
-        <!-- File Tree -->
-        <div class="file-tree" id="fileTree">
-          <div class="empty-state">No project selected</div>
-        </div>
-        
-        <!-- File Actions -->
-        <div class="file-actions">
-          <button class="btn-small" id="newFileBtn">+ File</button>
-          <button class="btn-small" id="newFolderBtn">+ Folder</button>
-        </div>
+      <span class="logo">AI</span>
+      <div class="right">
+        <button onclick="modal('import')" title="Import">↓</button>
+        <button onclick="exportAll()" title="Export">↑</button>
+        <button onclick="modal('deploy')" title="Deploy">⚡</button>
+        <button onclick="modal('settings')" title="Settings">⚙</button>
+        <button onclick="toggle('preview')" title="Preview">◧</button>
       </div>
-    </aside>
+    </header>
 
-    <!-- MAIN - AI Chat -->
-    <main class="main-chat" id="mainChat">
-      <!-- Header -->
-      <header class="chat-header">
-        <div class="logo">✨ <span>Nebula AI</span></div>
-        <div class="header-actions">
-          <select id="modelSelect" class="model-select">
-            <option value="auto">🤖 Auto</option>
-            <option value="claude">Claude 3.5</option>
-            <option value="gpt4">GPT-4o</option>
-            <option value="gemini">Gemini Pro</option>
-            <option value="groq">Groq (Fast)</option>
-          </select>
-        </div>
-      </header>
-
-      <!-- Messages -->
-      <div class="messages-container" id="messagesContainer">
-        <div class="welcome-message">
-          <div class="welcome-icon">✨</div>
-          <h1>Welcome to Nebula AI</h1>
-          <p>Your ultra-fast AI coding assistant. Ask me anything!</p>
-          <div class="quick-actions">
-            <button class="quick-btn" data-prompt="Create a React component">⚛️ React Component</button>
-            <button class="quick-btn" data-prompt="Build an API endpoint">🔌 API Endpoint</button>
-            <button class="quick-btn" data-prompt="Write a Python script">🐍 Python Script</button>
-            <button class="quick-btn" data-prompt="Create an HTML page">🌐 HTML Page</button>
+    <!-- Workspace -->
+    <main>
+      <!-- Files Panel -->
+      <aside id="files" class="panel">
+        <div class="panel-head">
+          <span>Files</span>
+          <div>
+            <button onclick="newFile()">+</button>
+            <button onclick="newFolder()">📁</button>
+            <button onclick="toggle('files')">×</button>
           </div>
         </div>
-      </div>
+        <div id="tree"></div>
+      </aside>
 
-      <!-- Input Area -->
-      <div class="input-area">
-        <div class="input-container">
-          <textarea 
-            id="messageInput" 
-            placeholder="Ask Nebula anything... (Shift+Enter for new line)"
-            rows="1"
-          ></textarea>
-          <button class="send-btn" id="sendBtn">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="22" y1="2" x2="11" y2="13"/>
-              <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-            </svg>
-          </button>
+      <!-- Chat Area -->
+      <section id="chat">
+        <div id="msgs"></div>
+        <div id="attachList"></div>
+        <div class="input-row">
+          <label class="attach">
+            <input type="file" multiple onchange="attach(this.files)" hidden>📎
+          </label>
+          <textarea id="input" placeholder="What do you want to build?" rows="1"></textarea>
+          <button onclick="send()">➤</button>
         </div>
-        <div class="input-hint">Press Enter to send • Shift+Enter for new line</div>
-      </div>
+      </section>
+
+      <!-- Preview Panel -->
+      <aside id="preview" class="panel right">
+        <div class="panel-head">
+          <span>Preview</span>
+          <div>
+            <button onclick="runPreview()">▶</button>
+            <button onclick="expand()">⛶</button>
+            <button onclick="toggle('preview')">×</button>
+          </div>
+        </div>
+        <div class="preview-tabs">
+          <button class="active" onclick="showTab('frame')">Live</button>
+          <button onclick="showTab('html')">HTML</button>
+          <button onclick="showTab('css')">CSS</button>
+          <button onclick="showTab('js')">JS</button>
+          <button onclick="showTab('log')">Log</button>
+        </div>
+        <iframe id="frame"></iframe>
+        <pre id="codeView"></pre>
+        <div id="log"></div>
+      </aside>
     </main>
-
-    <!-- RIGHT PANEL - Live Preview -->
-    <aside class="side-panel right-panel" id="rightPanel">
-      <div class="panel-header">
-        <h2>👁️ Live Preview</h2>
-        <div class="preview-actions">
-          <button class="btn-icon" id="refreshPreview" title="Refresh">↻</button>
-          <button class="btn-icon" id="openExternal" title="Open in new tab">↗</button>
-          <button class="panel-close" id="rightClose">×</button>
-        </div>
-      </div>
-      <div class="panel-content preview-content">
-        <div class="preview-toolbar">
-          <button class="device-btn active" data-width="100%">💻</button>
-          <button class="device-btn" data-width="768px">📱</button>
-          <button class="device-btn" data-width="375px">📱</button>
-        </div>
-        <div class="preview-frame-container" id="previewContainer">
-          <iframe id="previewFrame" sandbox="allow-scripts allow-same-origin"></iframe>
-          <div class="preview-empty" id="previewEmpty">
-            <div class="preview-empty-icon">👁️</div>
-            <p>Live preview will appear here</p>
-            <small>Generate HTML/CSS/JS to see it live</small>
-          </div>
-        </div>
-      </div>
-    </aside>
   </div>
 
-  <!-- Code Editor Modal -->
-  <div class="modal" id="codeModal">
-    <div class="modal-content code-modal">
-      <div class="modal-header">
-        <span id="codeModalTitle">Code</span>
-        <div class="modal-actions">
-          <button class="btn-small" id="copyCodeBtn">📋 Copy</button>
-          <button class="btn-small" id="previewCodeBtn">👁️ Preview</button>
-          <button class="modal-close" id="codeModalClose">×</button>
-        </div>
-      </div>
-      <pre id="codeContent"><code></code></pre>
+  <!-- Settings Modal -->
+  <div id="settings" class="modal">
+    <div class="box">
+      <div class="head"><span>Settings</span><button onclick="modal('settings')">×</button></div>
+      <label>Model<select id="model">
+        <option value="claude">Claude</option>
+        <option value="gpt-4">GPT-4</option>
+        <option value="gemini">Gemini</option>
+        <option value="groq">Groq</option>
+      </select></label>
+      <label>Temp <input type="range" id="temp" min="0" max="1" step="0.1" value="0.7"></label>
+      <label><input type="checkbox" id="autoRun" checked> Auto-run preview</label>
+      <button onclick="saveSettings()">Save</button>
     </div>
   </div>
 
-  <!-- New Project Modal -->
-  <div class="modal" id="projectModal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <span>New Project</span>
-        <button class="modal-close" id="projectModalClose">×</button>
-      </div>
-      <div class="modal-body">
-        <input type="text" id="projectNameInput" placeholder="Project name..." class="modal-input">
-        <button class="btn-primary" id="createProjectBtn">Create Project</button>
-      </div>
+  <!-- Deploy Modal -->
+  <div id="deploy" class="modal">
+    <div class="box">
+      <div class="head"><span>Deploy</span><button onclick="modal('deploy')">×</button></div>
+      <label>Platform<select id="platform">
+        <option value="netlify">Netlify</option>
+        <option value="vercel">Vercel</option>
+      </select></label>
+      <label>Name<input type="text" id="deployName" placeholder="my-project"></label>
+      <button onclick="doDeploy()">🚀 Deploy</button>
+      <div id="deployOut"></div>
     </div>
   </div>
 
-  <script src="/config.js"></script>
-  <script src="/utils/api.js"></script>
-  <script src="/app.js"></script>
+  <!-- Import Modal -->
+  <div id="import" class="modal">
+    <div class="box">
+      <div class="head"><span>Import</span><button onclick="modal('import')">×</button></div>
+      <div class="import-opts">
+        <label><input type="file" accept=".zip" onchange="importZip(this.files[0])" hidden><div>📦 ZIP</div></label>
+        <label><input type="file" multiple onchange="importFiles(this.files)" hidden><div>📄 Files</div></label>
+      </div>
+      <input type="text" id="ghUrl" placeholder="GitHub URL">
+      <button onclick="importGH()">Import from GitHub</button>
+    </div>
+  </div>
+
+  <!-- Fullscreen Preview -->
+  <div id="full" class="modal full">
+    <div class="full-box">
+      <div class="head"><span>Preview</span><button onclick="modal('full')">×</button></div>
+      <iframe id="fullFrame"></iframe>
+    </div>
+  </div>
+
+  <!-- Editor Modal -->
+  <div id="editor" class="modal">
+    <div class="box wide">
+      <div class="head"><span id="editName">Edit</span><button onclick="modal('editor')">×</button></div>
+      <textarea id="code"></textarea>
+      <button onclick="saveFile()">Save</button>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
