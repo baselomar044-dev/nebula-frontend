@@ -1,267 +1,196 @@
-// AI App - Full Featured
+// AI App - Production Ready with Auto-Fix, Smart Models, Database
 const API = 'https://nebula-api-production.up.railway.app';
 
 // State
 let files = {};
 let currentFile = null;
-let attachments = [];
-let conversationHistory = [];
-let previewCode = { html: '', css: '', js: '' };
-let sessionId = localStorage.getItem('sessionId') || Math.random().toString(36).substr(2, 9);
-localStorage.setItem('sessionId', sessionId);
+let chatHistory = [];
+let settings = JSON.parse(localStorage.getItem('ai-settings') || '{}');
+let dbTables = [];
 
 // DOM Elements
 const $ = id => document.getElementById(id);
 const leftPanel = $('leftPanel');
 const rightPanel = $('rightPanel');
-const messages = $('messages');
-const input = $('input');
-const fileTree = $('fileTree');
+const chatMessages = $('chatMessages');
+const chatInput = $('chatInput');
 const previewFrame = $('previewFrame');
-const modelSelect = $('modelSelect');
+const fileList = $('fileList');
+const terminalOutput = $('terminalOutput');
+const dbOutput = $('dbOutput');
 
-// Initialize
-async function init() {
-  setupEventListeners();
-  loadSettings();
-  await loadModels();
-  loadFilesFromStorage();
-  renderFileTree();
+// Model Configuration - Smart Selection
+const MODELS = {
+  'auto': { name: 'Auto (Smart Select)', provider: 'auto' },
+  'claude-sonnet': { name: 'Claude 3.5 Sonnet', provider: 'anthropic', id: 'claude-3-5-sonnet-20241022', complexity: 'high' },
+  'claude-haiku': { name: 'Claude 3 Haiku', provider: 'anthropic', id: 'claude-3-haiku-20240307', complexity: 'low' },
+  'gpt-4o': { name: 'GPT-4o', provider: 'openai', id: 'gpt-4o', complexity: 'high' },
+  'gpt-4o-mini': { name: 'GPT-4o Mini', provider: 'openai', id: 'gpt-4o-mini', complexity: 'low' },
+  'groq-llama': { name: 'Llama 3.3 70B', provider: 'groq', id: 'llama-3.3-70b-versatile', complexity: 'medium' },
+  'gemini-pro': { name: 'Gemini 1.5 Pro', provider: 'google', id: 'gemini-1.5-pro', complexity: 'high' },
+  'gemini-flash': { name: 'Gemini 1.5 Flash', provider: 'google', id: 'gemini-1.5-flash', complexity: 'low' }
+};
+
+// Smart model selection based on task complexity
+function selectSmartModel(message) {
+  const msg = message.toLowerCase();
+  
+  // Complex tasks -> Claude Sonnet
+  const complexPatterns = [
+    /build.*app/i, /create.*project/i, /full.*stack/i, /complex/i,
+    /refactor/i, /architect/i, /design.*system/i, /multiple.*file/i,
+    /dashboard/i, /authentication/i, /database.*design/i
+  ];
+  
+  // Medium tasks -> Groq Llama (fast + good)
+  const mediumPatterns = [
+    /explain/i, /how.*work/i, /debug/i, /fix.*bug/i,
+    /add.*feature/i, /update/i, /modify/i, /improve/i
+  ];
+  
+  // Simple tasks -> Haiku/Mini (cheap + fast)
+  const simplePatterns = [
+    /hello/i, /hi/i, /thanks/i, /what.*is/i, /define/i,
+    /simple/i, /quick/i, /short/i, /one.*line/i
+  ];
+  
+  if (complexPatterns.some(p => p.test(msg)) || msg.length > 500) {
+    return 'anthropic/claude-3-5-sonnet-20241022';
+  } else if (simplePatterns.some(p => p.test(msg)) || msg.length < 50) {
+    return 'groq/llama-3.1-8b-instant';
+  } else {
+    return 'groq/llama-3.3-70b-versatile';
+  }
 }
 
-// Event Listeners
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+  loadSettings();
+  loadFiles();
+  setupEventListeners();
+  addWelcomeMessage();
+});
+
+function loadSettings() {
+  if (settings.githubToken) $('githubToken').value = settings.githubToken;
+  if (settings.model) $('modelSelect').value = settings.model;
+  if (settings.autoPreview !== undefined) $('autoPreview').checked = settings.autoPreview;
+  if (settings.autoFix !== undefined) $('autoFix').checked = settings.autoFix;
+  else settings.autoFix = true; // Default on
+}
+
+function saveSettings() {
+  settings.githubToken = $('githubToken').value;
+  settings.model = $('modelSelect').value;
+  settings.autoPreview = $('autoPreview').checked;
+  settings.autoFix = $('autoFix').checked;
+  localStorage.setItem('ai-settings', JSON.stringify(settings));
+  closeModal('settingsModal');
+  showToast('Settings saved');
+}
+
 function setupEventListeners() {
-  // Panel toggles
-  $('filesBtn').onclick = () => leftPanel.classList.toggle('open');
-  $('previewBtn').onclick = () => rightPanel.classList.toggle('open');
-  $('settingsBtn').onclick = () => openModal('settingsModal');
-  $('gitBtn').onclick = () => { openModal('gitModal'); loadRepos(); };
-  $('dbBtn').onclick = () => { rightPanel.classList.add('open'); switchTab('database'); };
-  $('termBtn').onclick = () => { rightPanel.classList.add('open'); switchTab('terminal'); };
-  
-  // Send message
-  $('sendBtn').onclick = sendMessage;
-  input.onkeydown = e => {
+  // Chat input
+  chatInput.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
-  };
-  
-  // Auto-resize input
-  input.oninput = () => {
-    input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 200) + 'px';
-  };
-  
-  // Attachments
-  $('attachBtn').onclick = () => $('fileInput').click();
-  $('fileInput').onchange = handleAttachments;
-  
-  // Preview tabs
-  document.querySelectorAll('.preview-tab-btn').forEach(btn => {
-    btn.onclick = () => switchPreviewTab(btn.dataset.view);
   });
-  
-  // Panel tabs
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.onclick = () => switchTab(btn.dataset.tab);
-  });
-  
-  // Git tabs
-  document.querySelectorAll('.git-tab').forEach(btn => {
-    btn.onclick = () => switchGitTab(btn.dataset.git);
-  });
-  
-  // Terminal
-  $('terminalInput').onkeydown = e => {
-    if (e.key === 'Enter') runTerminalCommand();
-  };
-  
-  // Expand preview
-  $('expandPreview').onclick = () => rightPanel.classList.toggle('expanded');
-  $('refreshPreview').onclick = updatePreview;
   
   // Keyboard shortcuts
-  document.onkeydown = e => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'b') { e.preventDefault(); leftPanel.classList.toggle('open'); }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'p') { e.preventDefault(); rightPanel.classList.toggle('open'); }
-    if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveFilesToStorage(); }
-  };
-}
-
-// Load available models
-async function loadModels() {
-  try {
-    const res = await fetch(`${API}/api/config`);
-    const data = await res.json();
-    
-    modelSelect.innerHTML = '<option value="auto">Auto Select</option>';
-    $('defaultModel').innerHTML = '<option value="auto">Auto Select</option>';
-    
-    for (const [provider, models] of Object.entries(data.models)) {
-      for (const model of models) {
-        const opt = `<option value="${provider}/${model}">${provider}: ${model}</option>`;
-        modelSelect.innerHTML += opt;
-        $('defaultModel').innerHTML += opt;
-      }
+  document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+      e.preventDefault();
+      togglePanel('left');
     }
-  } catch (e) {
-    console.error('Failed to load models:', e);
-  }
-}
-
-// Send message with streaming
-async function sendMessage() {
-  const text = input.value.trim();
-  if (!text && attachments.length === 0) return;
-  
-  // Build message
-  let fullMessage = text;
-  if (attachments.length > 0) {
-    fullMessage += '\n\nAttached files:\n';
-    for (const att of attachments) {
-      fullMessage += `\n--- ${att.name} ---\n${att.content}\n`;
+    if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
+      e.preventDefault();
+      togglePanel('right');
     }
-  }
-  
-  // Add user message
-  addMessage('user', text);
-  conversationHistory.push({ role: 'user', content: fullMessage });
-  
-  // Clear input
-  input.value = '';
-  input.style.height = 'auto';
-  attachments = [];
-  $('attachments').innerHTML = '';
-  
-  // Add assistant placeholder
-  const assistantMsg = addMessage('assistant', '');
-  const useStreaming = $('streamResponses')?.checked !== false;
-  
-  if (useStreaming) {
-    await streamResponse(fullMessage, assistantMsg);
-  } else {
-    await normalResponse(fullMessage, assistantMsg);
-  }
-}
-
-// Streaming response
-async function streamResponse(message, msgElement) {
-  const model = modelSelect.value;
-  
-  try {
-    const response = await fetch(`${API}/api/ai/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        message, 
-        model,
-        context: conversationHistory.slice(-10)
-      })
-    });
-    
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let fullText = '';
-    
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      const chunk = decoder.decode(value);
-      const lines = chunk.split('\n');
-      
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.text) {
-              fullText += data.text;
-              msgElement.innerHTML = formatMessage(fullText);
-              messages.scrollTop = messages.scrollHeight;
-            }
-            if (data.error) {
-              msgElement.innerHTML = `<span style="color:var(--red)">Error: ${data.error}</span>`;
-            }
-          } catch (e) {}
-        }
-      }
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      e.preventDefault();
+      saveCurrentFile();
     }
-    
-    conversationHistory.push({ role: 'assistant', content: fullText });
-    extractAndUpdateFiles(fullText);
-    
-  } catch (e) {
-    msgElement.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
-  }
-}
-
-// Normal (non-streaming) response
-async function normalResponse(message, msgElement) {
-  msgElement.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+  });
   
-  try {
-    const res = await fetch(`${API}/api/ai/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, model: modelSelect.value })
-    });
-    
-    const data = await res.json();
-    
-    if (data.error) {
-      msgElement.innerHTML = `<span style="color:var(--red)">Error: ${data.error}</span>`;
-      return;
-    }
-    
-    const text = data.response;
-    conversationHistory.push({ role: 'assistant', content: text });
-    msgElement.innerHTML = formatMessage(text);
-    extractAndUpdateFiles(text);
-    
-  } catch (e) {
-    msgElement.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
-  }
+  // Auto-resize textarea
+  chatInput.addEventListener('input', () => {
+    chatInput.style.height = 'auto';
+    chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+  });
 }
 
-// Add message to chat
-function addMessage(role, content) {
+function addWelcomeMessage() {
+  addMessage('assistant', `**Welcome to AI** 🚀
+
+I can help you build anything:
+- "Build a landing page with hero and features"
+- "Create a todo app with local storage"
+- "Make a dashboard with charts"
+
+**Features:**
+- 🔄 Smart model selection (auto-picks best AI)
+- 🛠️ Auto-fix errors in preview
+- 📁 Full file management
+- 🗄️ SQL database support
+- ⎇ Git import/export
+
+What would you like to build?`);
+}
+
+// Panel Controls
+function togglePanel(side) {
+  const panel = side === 'left' ? leftPanel : rightPanel;
+  panel.classList.toggle('open');
+}
+
+function expandPreview() {
+  rightPanel.classList.toggle('expanded');
+}
+
+// Chat Functions
+function addMessage(role, content, isStreaming = false) {
   const div = document.createElement('div');
   div.className = `message ${role}`;
-  div.innerHTML = role === 'user' ? escapeHtml(content) : formatMessage(content);
-  messages.appendChild(div);
-  messages.scrollTop = messages.scrollHeight;
+  div.innerHTML = `<div class="message-content">${formatMessage(content)}</div>`;
+  
+  if (role === 'assistant' && !isStreaming) {
+    // Extract files from code blocks
+    extractFiles(content);
+    
+    // Add action buttons
+    const actions = document.createElement('div');
+    actions.className = 'message-actions';
+    actions.innerHTML = `
+      <button onclick="copyMessage(this)">Copy</button>
+      <button onclick="previewCode(this)">Preview</button>
+      <button onclick="insertToFiles(this)">Add to Files</button>
+    `;
+    div.appendChild(actions);
+  }
+  
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
   return div;
 }
 
-// Format message with code blocks
-function formatMessage(text) {
-  if (!text) return '';
-  
-  // Extract code blocks
-  let html = escapeHtml(text);
-  
-  // Match code blocks with filename pattern: **filename.ext**\n```lang\ncode\n```
-  html = html.replace(/\*\*([^*]+\.[a-z]+)\*\*\s*\n```(\w*)\n([\s\S]*?)```/gi, (match, filename, lang, code) => {
-    return `<div class="code-header"><span>${filename}</span><div><button onclick="copyCode(this)">Copy</button><button onclick="addToFiles('${filename}', this)">Add</button><button onclick="previewCode('${filename}', this)">Preview</button></div></div><pre><code class="language-${lang || 'text'}">${code}</code></pre>`;
+function formatMessage(content) {
+  // Convert markdown code blocks
+  content = content.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
+    return `<pre><code class="language-${lang || 'text'}">${escapeHtml(code.trim())}</code></pre>`;
   });
   
-  // Match regular code blocks
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
-    return `<div class="code-header"><span>${lang || 'code'}</span><button onclick="copyCode(this)">Copy</button></div><pre><code class="language-${lang || 'text'}">${code}</code></pre>`;
-  });
+  // Convert inline code
+  content = content.replace(/`([^`]+)`/g, '<code>$1</code>');
   
-  // Inline code
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Convert bold
+  content = content.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   
-  // Bold
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // Convert line breaks
+  content = content.replace(/\n/g, '<br>');
   
-  // Line breaks
-  html = html.replace(/\n/g, '<br>');
-  
-  return html;
+  return content;
 }
 
 function escapeHtml(text) {
@@ -270,74 +199,237 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-// Copy code
-function copyCode(btn) {
-  const code = btn.closest('.code-header').nextElementSibling.textContent;
-  navigator.clipboard.writeText(code);
-  btn.textContent = 'Copied!';
-  setTimeout(() => btn.textContent = 'Copy', 1500);
-}
-
-// Add code to files
-function addToFiles(filename, btn) {
-  const code = btn.closest('.code-header').nextElementSibling.textContent;
-  files[filename] = code;
-  saveFilesToStorage();
-  renderFileTree();
-  btn.textContent = 'Added!';
-  setTimeout(() => btn.textContent = 'Add', 1500);
-}
-
-// Preview code
-function previewCode(filename, btn) {
-  const code = btn.closest('.code-header').nextElementSibling.textContent;
-  const ext = filename.split('.').pop().toLowerCase();
+async function sendMessage() {
+  const message = chatInput.value.trim();
+  if (!message) return;
   
-  if (ext === 'html') previewCode.html = code;
-  else if (ext === 'css') previewCode.css = code;
-  else if (ext === 'js') previewCode.js = code;
+  chatInput.value = '';
+  chatInput.style.height = 'auto';
   
-  updatePreview();
-  rightPanel.classList.add('open');
-  switchTab('preview');
-}
-
-// Extract files from AI response
-function extractAndUpdateFiles(text) {
-  const regex = /\*\*([^*]+\.[a-z]+)\*\*\s*\n```\w*\n([\s\S]*?)```/gi;
-  let match;
-  let hasFiles = false;
+  // Add user message
+  addMessage('user', message);
+  chatHistory.push({ role: 'user', content: message });
   
-  while ((match = regex.exec(text)) !== null) {
-    const filename = match[1];
-    const code = match[2];
-    files[filename] = code;
-    hasFiles = true;
+  // Show typing indicator
+  const typingDiv = addMessage('assistant', '<span class="typing">Thinking...</span>', true);
+  
+  try {
+    // Determine model
+    let model = settings.model || 'auto';
+    if (model === 'auto') {
+      model = selectSmartModel(message);
+    }
     
-    const ext = filename.split('.').pop().toLowerCase();
-    if (ext === 'html') previewCode.html = code;
-    else if (ext === 'css') previewCode.css = code;
-    else if (ext === 'js') previewCode.js = code;
+    // Build context with current files
+    let context = message;
+    if (Object.keys(files).length > 0) {
+      context = `Current project files:\n${Object.entries(files).map(([name, content]) => 
+        `**${name}**:\n\`\`\`\n${content.substring(0, 1000)}\n\`\`\``
+      ).join('\n\n')}\n\nUser request: ${message}`;
+    }
+    
+    // Check if streaming is supported
+    const useStreaming = settings.streaming !== false;
+    
+    if (useStreaming) {
+      await streamResponse(context, model, typingDiv);
+    } else {
+      const response = await fetch(`${API}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: context, model })
+      });
+      
+      const data = await response.json();
+      typingDiv.remove();
+      addMessage('assistant', data.response || data.error || 'No response');
+      chatHistory.push({ role: 'assistant', content: data.response });
+    }
+    
+    // Auto preview if enabled
+    if (settings.autoPreview !== false) {
+      setTimeout(() => updatePreview(), 500);
+    }
+    
+  } catch (error) {
+    typingDiv.remove();
+    addMessage('assistant', `Error: ${error.message}`);
   }
+}
+
+async function streamResponse(message, model, typingDiv) {
+  const response = await fetch(`${API}/api/ai/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, model })
+  });
   
-  if (hasFiles) {
-    saveFilesToStorage();
-    renderFileTree();
+  typingDiv.remove();
+  const streamDiv = addMessage('assistant', '', true);
+  const contentDiv = streamDiv.querySelector('.message-content');
+  let fullContent = '';
+  
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
     
-    if ($('autoPreview')?.checked !== false) {
-      updatePreview();
-      rightPanel.classList.add('open');
+    const chunk = decoder.decode(value);
+    const lines = chunk.split('\n');
+    
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.text) {
+            fullContent += data.text;
+            contentDiv.innerHTML = formatMessage(fullContent);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+          }
+          if (data.done) {
+            // Add action buttons
+            const actions = document.createElement('div');
+            actions.className = 'message-actions';
+            actions.innerHTML = `
+              <button onclick="copyMessage(this)">Copy</button>
+              <button onclick="previewCode(this)">Preview</button>
+              <button onclick="insertToFiles(this)">Add to Files</button>
+            `;
+            streamDiv.appendChild(actions);
+            
+            // Extract files
+            extractFiles(fullContent);
+            chatHistory.push({ role: 'assistant', content: fullContent });
+          }
+        } catch (e) {}
+      }
     }
   }
 }
 
-// Update preview
-function updatePreview() {
-  const html = previewCode.html || files['index.html'] || '';
-  const css = previewCode.css || files['style.css'] || files['styles.css'] || '';
-  const js = previewCode.js || files['script.js'] || files['app.js'] || '';
+// File extraction from AI responses
+function extractFiles(content) {
+  const filePattern = /\*\*([^*]+\.(html|css|js|json|py|md))\*\*\s*[\n\r]*```[\w]*\n([\s\S]*?)```/gi;
+  let match;
   
-  const content = `
+  while ((match = filePattern.exec(content)) !== null) {
+    const filename = match[1].trim();
+    const code = match[3].trim();
+    files[filename] = code;
+  }
+  
+  // Also extract unnamed code blocks
+  const codePattern = /```(html|css|javascript|js)\n([\s\S]*?)```/gi;
+  while ((match = codePattern.exec(content)) !== null) {
+    const lang = match[1].toLowerCase();
+    const code = match[2].trim();
+    const ext = lang === 'javascript' ? 'js' : lang;
+    const filename = `main.${ext}`;
+    if (!files[filename]) {
+      files[filename] = code;
+    }
+  }
+  
+  renderFileList();
+  saveFiles();
+}
+
+// File Management
+function renderFileList() {
+  fileList.innerHTML = '';
+  
+  Object.keys(files).sort().forEach(name => {
+    const div = document.createElement('div');
+    div.className = `file-item ${currentFile === name ? 'active' : ''}`;
+    div.innerHTML = `
+      <span class="file-icon">${getFileIcon(name)}</span>
+      <span class="file-name">${name}</span>
+      <button class="file-delete" onclick="deleteFile('${name}')">×</button>
+    `;
+    div.onclick = (e) => {
+      if (!e.target.classList.contains('file-delete')) {
+        openFile(name);
+      }
+    };
+    fileList.appendChild(div);
+  });
+}
+
+function getFileIcon(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  const icons = {
+    html: '📄', css: '🎨', js: '⚡', json: '📋',
+    py: '🐍', md: '📝', txt: '📃', sql: '🗄️'
+  };
+  return icons[ext] || '📄';
+}
+
+function openFile(name) {
+  currentFile = name;
+  renderFileList();
+  
+  // Show in editor modal or preview
+  showToast(`Opened ${name}`);
+  
+  // Update preview if it's a viewable file
+  if (['html', 'css', 'js'].includes(name.split('.').pop())) {
+    updatePreview();
+  }
+}
+
+function deleteFile(name) {
+  if (confirm(`Delete ${name}?`)) {
+    delete files[name];
+    if (currentFile === name) currentFile = null;
+    renderFileList();
+    saveFiles();
+    showToast(`Deleted ${name}`);
+  }
+}
+
+function createFile() {
+  const name = prompt('File name (e.g., script.js):');
+  if (name) {
+    files[name] = '';
+    currentFile = name;
+    renderFileList();
+    saveFiles();
+    showModal('editorModal');
+    $('editorFileName').textContent = name;
+    $('codeEditor').value = '';
+  }
+}
+
+function saveCurrentFile() {
+  if (currentFile && $('codeEditor')) {
+    files[currentFile] = $('codeEditor').value;
+    saveFiles();
+    updatePreview();
+    showToast('Saved');
+  }
+}
+
+function saveFiles() {
+  localStorage.setItem('ai-files', JSON.stringify(files));
+}
+
+function loadFiles() {
+  const saved = localStorage.getItem('ai-files');
+  if (saved) {
+    files = JSON.parse(saved);
+    renderFileList();
+  }
+}
+
+// Preview
+function updatePreview() {
+  const html = files['index.html'] || files['main.html'] || '';
+  const css = files['style.css'] || files['main.css'] || files['styles.css'] || '';
+  const js = files['script.js'] || files['main.js'] || files['app.js'] || '';
+  
+  const fullHtml = `
     <!DOCTYPE html>
     <html>
     <head>
@@ -346,453 +438,453 @@ function updatePreview() {
       <style>${css}</style>
     </head>
     <body>
-      ${html.replace(/<html[\s\S]*<body[^>]*>/gi, '').replace(/<\/body>[\s\S]*<\/html>/gi, '')}
+      ${html.includes('<body') ? html.replace(/.*<body[^>]*>/is, '').replace(/<\/body>.*/is, '') : html}
       <script>
-        window.onerror = (msg, url, line, col, err) => {
-          parent.postMessage({ type: 'error', message: msg, line, col }, '*');
-          return true;
+        window.onerror = function(msg, url, line) {
+          parent.postMessage({type: 'error', message: msg, line: line}, '*');
+          return false;
         };
-        console.log = (...args) => parent.postMessage({ type: 'log', args }, '*');
-        console.error = (...args) => parent.postMessage({ type: 'error', args }, '*');
-        console.warn = (...args) => parent.postMessage({ type: 'warn', args }, '*');
-      <\/script>
-      <script>${js}<\/script>
+        ${js}
+      </script>
     </body>
     </html>
   `;
   
-  previewFrame.srcdoc = content;
+  previewFrame.srcdoc = fullHtml;
+  
+  // Open preview panel if content exists
+  if (html || css || js) {
+    rightPanel.classList.add('open');
+  }
 }
 
-// Handle preview console messages
-window.addEventListener('message', e => {
-  if (e.data.type === 'log' || e.data.type === 'error' || e.data.type === 'warn') {
-    const consoleView = $('consoleView');
-    const div = document.createElement('div');
-    div.className = `console-${e.data.type === 'warn' ? 'warn' : e.data.type === 'error' ? 'error' : 'log'}`;
-    div.textContent = e.data.args ? e.data.args.join(' ') : e.data.message;
-    consoleView.appendChild(div);
+// Listen for preview errors (Auto-Fix)
+window.addEventListener('message', async (e) => {
+  if (e.data && e.data.type === 'error') {
+    const error = e.data;
+    console.error('Preview error:', error);
     
-    // Auto-debug errors
-    if (e.data.type === 'error') {
-      autoDebugError(e.data.message || e.data.args?.join(' '));
+    // Add error to terminal
+    addTerminalOutput(`Error at line ${error.line}: ${error.message}`, 'error');
+    
+    // Auto-fix if enabled
+    if (settings.autoFix !== false) {
+      await autoFixError(error);
     }
   }
 });
 
-// Auto debug errors
-async function autoDebugError(error) {
-  const js = previewCode.js || files['script.js'] || files['app.js'] || '';
-  if (!js) return;
+async function autoFixError(error) {
+  showToast('Auto-fixing error...', 'info');
   
+  const jsCode = files['script.js'] || files['main.js'] || files['app.js'] || '';
+  
+  const fixPrompt = `Fix this JavaScript error:
+Error: ${error.message} at line ${error.line}
+
+Code:
+\`\`\`javascript
+${jsCode}
+\`\`\`
+
+Provide ONLY the corrected code, no explanations.`;
+
   try {
-    const res = await fetch(`${API}/api/debug/fix`, {
+    const response = await fetch(`${API}/api/ai/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: js, error, language: 'javascript' })
+      body: JSON.stringify({ 
+        message: fixPrompt, 
+        model: 'groq/llama-3.3-70b-versatile' // Fast model for fixes
+      })
     });
     
-    const data = await res.json();
-    if (data.fix) {
-      // Show fix suggestion in chat
-      const msg = addMessage('assistant', `🔧 **Error detected:** ${error}\n\n**Suggested fix:**\n\`\`\`javascript\n${data.fix}\n\`\`\``);
+    const data = await response.json();
+    
+    // Extract fixed code
+    const codeMatch = data.response.match(/```(?:javascript|js)?\n([\s\S]*?)```/);
+    if (codeMatch) {
+      const fixedCode = codeMatch[1].trim();
+      const jsFile = Object.keys(files).find(f => f.endsWith('.js'));
+      if (jsFile) {
+        files[jsFile] = fixedCode;
+        saveFiles();
+        updatePreview();
+        showToast('Error fixed!', 'success');
+        addTerminalOutput('Auto-fix applied successfully', 'success');
+      }
     }
-  } catch (e) {
-    console.error('Auto-debug failed:', e);
+  } catch (err) {
+    showToast('Auto-fix failed', 'error');
   }
 }
 
-// Switch tabs
-function switchTab(tab) {
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.tab === tab);
-  });
-  document.querySelectorAll('.tab-content').forEach(content => {
-    content.classList.toggle('active', content.id === tab + 'Tab');
-  });
+// Terminal
+function addTerminalOutput(text, type = 'log') {
+  const line = document.createElement('div');
+  line.className = `terminal-line ${type}`;
+  line.textContent = `> ${text}`;
+  terminalOutput.appendChild(line);
+  terminalOutput.scrollTop = terminalOutput.scrollHeight;
 }
 
-function switchPreviewTab(view) {
-  document.querySelectorAll('.preview-tab-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.view === view);
-  });
+async function runTerminalCommand() {
+  const input = $('terminalInput');
+  const cmd = input.value.trim();
+  if (!cmd) return;
   
-  const frame = previewFrame;
-  const codeView = $('codeView');
-  const consoleView = $('consoleView');
-  const codeContent = $('codeContent');
+  input.value = '';
+  addTerminalOutput(cmd, 'command');
   
-  frame.classList.toggle('hidden', view !== 'live');
-  codeView.classList.toggle('hidden', ['live', 'console'].includes(view));
-  consoleView.classList.toggle('hidden', view !== 'console');
-  
-  if (view === 'html') codeContent.textContent = previewCode.html || files['index.html'] || '';
-  else if (view === 'css') codeContent.textContent = previewCode.css || files['style.css'] || '';
-  else if (view === 'js') codeContent.textContent = previewCode.js || files['script.js'] || '';
-}
-
-function switchGitTab(tab) {
-  document.querySelectorAll('.git-tab').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.git === tab);
-  });
-  document.querySelectorAll('.git-content').forEach(content => {
-    content.classList.toggle('active', content.id === 'git' + tab.charAt(0).toUpperCase() + tab.slice(1));
-  });
-}
-
-// File management
-function renderFileTree() {
-  fileTree.innerHTML = '';
-  
-  for (const [name, content] of Object.entries(files)) {
-    const div = document.createElement('div');
-    div.className = `file-item${currentFile === name ? ' active' : ''}`;
-    div.innerHTML = `<span class="icon">${getFileIcon(name)}</span><span>${name}</span>`;
-    div.onclick = () => openFile(name);
-    fileTree.appendChild(div);
+  try {
+    const response = await fetch(`${API}/api/execute/shell`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: cmd })
+    });
+    
+    const data = await response.json();
+    if (data.output) addTerminalOutput(data.output);
+    if (data.error) addTerminalOutput(data.error, 'error');
+  } catch (err) {
+    addTerminalOutput(err.message, 'error');
   }
 }
 
-function getFileIcon(name) {
-  const ext = name.split('.').pop().toLowerCase();
-  const icons = {
-    html: '🌐', css: '🎨', js: '⚡', json: '📋', md: '📝', py: '🐍'
-  };
-  return icons[ext] || '📄';
-}
-
-function openFile(name) {
-  currentFile = name;
-  renderFileTree();
+// Database
+async function runQuery() {
+  const sql = $('sqlInput').value.trim();
+  if (!sql) return;
   
-  const ext = name.split('.').pop().toLowerCase();
-  if (['html', 'css', 'js'].includes(ext)) {
-    if (ext === 'html') previewCode.html = files[name];
-    else if (ext === 'css') previewCode.css = files[name];
-    else if (ext === 'js') previewCode.js = files[name];
-    updatePreview();
-    rightPanel.classList.add('open');
-    switchPreviewTab(ext);
+  try {
+    const response = await fetch(`${API}/api/db/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql })
+    });
+    
+    const data = await response.json();
+    
+    if (data.error) {
+      dbOutput.innerHTML = `<div class="db-error">${data.error}</div>`;
+    } else if (data.rows) {
+      renderTable(data.rows);
+    } else {
+      dbOutput.innerHTML = `<div class="db-success">Query executed. ${data.changes || 0} rows affected.</div>`;
+    }
+    
+    // Refresh table list
+    await loadTables();
+  } catch (err) {
+    dbOutput.innerHTML = `<div class="db-error">${err.message}</div>`;
   }
 }
 
-function createFile() {
-  const name = prompt('File name:');
-  if (name) {
-    files[name] = '';
-    saveFilesToStorage();
-    renderFileTree();
-    openFile(name);
+async function loadTables() {
+  try {
+    const response = await fetch(`${API}/api/db/tables`);
+    const data = await response.json();
+    dbTables = data.tables || [];
+    
+    const tablesDiv = $('tableList');
+    if (tablesDiv) {
+      tablesDiv.innerHTML = dbTables.map(t => 
+        `<div class="table-item" onclick="queryTable('${t}')">${t}</div>`
+      ).join('') || '<div class="no-tables">No tables yet</div>';
+    }
+  } catch (err) {}
+}
+
+async function queryTable(name) {
+  $('sqlInput').value = `SELECT * FROM ${name} LIMIT 100`;
+  await runQuery();
+}
+
+function renderTable(rows) {
+  if (!rows || rows.length === 0) {
+    dbOutput.innerHTML = '<div class="db-empty">No results</div>';
+    return;
+  }
+  
+  const cols = Object.keys(rows[0]);
+  let html = '<table class="db-table"><thead><tr>';
+  html += cols.map(c => `<th>${c}</th>`).join('');
+  html += '</tr></thead><tbody>';
+  
+  rows.forEach(row => {
+    html += '<tr>';
+    html += cols.map(c => `<td>${row[c] ?? ''}</td>`).join('');
+    html += '</tr>';
+  });
+  
+  html += '</tbody></table>';
+  dbOutput.innerHTML = html;
+}
+
+// Git Operations
+async function importFromGit() {
+  const url = prompt('GitHub repository URL:');
+  if (!url) return;
+  
+  showToast('Importing from GitHub...');
+  
+  try {
+    const response = await fetch(`${API}/api/git/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    
+    const data = await response.json();
+    
+    if (data.files) {
+      Object.assign(files, data.files);
+      saveFiles();
+      renderFileList();
+      updatePreview();
+      showToast(`Imported ${Object.keys(data.files).length} files!`, 'success');
+    } else {
+      showToast(data.error || 'Import failed', 'error');
+    }
+  } catch (err) {
+    showToast(err.message, 'error');
   }
 }
 
-function createFolder() {
-  alert('Folders are coming soon!');
+async function pushToGit() {
+  const repo = prompt('Repository name (will create if not exists):');
+  if (!repo) return;
+  
+  const token = settings.githubToken;
+  if (!token) {
+    showToast('Set GitHub token in Settings first', 'error');
+    return;
+  }
+  
+  showToast('Pushing to GitHub...');
+  
+  try {
+    const response = await fetch(`${API}/api/git/push`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo, token, files })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      showToast(`Pushed to github.com/${data.owner}/${repo}`, 'success');
+    } else {
+      showToast(data.error || 'Push failed', 'error');
+    }
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
 }
 
 // Import/Export
-async function importFiles() {
-  const choice = prompt('Enter:\n1. GitHub URL (https://github.com/user/repo)\n2. Or press Cancel to upload files');
-  
-  if (choice && choice.includes('github.com')) {
-    await gitImport(choice);
-  } else if (choice === null) {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.multiple = true;
-    input.onchange = async (e) => {
-      for (const file of e.target.files) {
-        const content = await file.text();
-        files[file.name] = content;
+function importProject() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.zip,.json';
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    if (file.name.endsWith('.json')) {
+      const text = await file.text();
+      const imported = JSON.parse(text);
+      Object.assign(files, imported);
+      saveFiles();
+      renderFileList();
+      showToast('Project imported!', 'success');
+    } else if (file.name.endsWith('.zip')) {
+      showToast('Extracting ZIP...');
+      // Handle ZIP import
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      try {
+        const response = await fetch(`${API}/api/git/import-zip`, {
+          method: 'POST',
+          body: formData
+        });
+        const data = await response.json();
+        if (data.files) {
+          Object.assign(files, data.files);
+          saveFiles();
+          renderFileList();
+          showToast('ZIP imported!', 'success');
+        }
+      } catch (err) {
+        // Fallback: just import as JSON
+        showToast('Use JSON format for now', 'info');
       }
-      saveFilesToStorage();
-      renderFileTree();
-    };
-    input.click();
-  }
+    }
+  };
+  input.click();
 }
 
-function exportFiles() {
-  const zip = {};
-  for (const [name, content] of Object.entries(files)) {
-    zip[name] = content;
-  }
-  
-  const blob = new Blob([JSON.stringify(zip, null, 2)], { type: 'application/json' });
+function exportProject() {
+  const data = JSON.stringify(files, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = 'project.json';
   a.click();
   URL.revokeObjectURL(url);
+  showToast('Project exported!');
+}
+
+// Deploy
+async function deployProject() {
+  showModal('deployModal');
+}
+
+async function deployToNetlify() {
+  showToast('Deploying to Netlify...');
+  closeModal('deployModal');
+  
+  try {
+    const response = await fetch(`${API}/api/deploy/netlify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files })
+    });
+    
+    const data = await response.json();
+    
+    if (data.url) {
+      showToast(`Deployed! ${data.url}`, 'success');
+      window.open(data.url, '_blank');
+    } else {
+      showToast(data.error || 'Deploy failed', 'error');
+    }
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function deployToVercel() {
+  showToast('Deploying to Vercel...');
+  closeModal('deployModal');
+  
+  try {
+    const response = await fetch(`${API}/api/deploy/vercel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files })
+    });
+    
+    const data = await response.json();
+    
+    if (data.url) {
+      showToast(`Deployed! ${data.url}`, 'success');
+      window.open(data.url, '_blank');
+    } else {
+      showToast(data.error || 'Deploy failed', 'error');
+    }
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
 }
 
 // Attachments
-async function handleAttachments(e) {
-  for (const file of e.target.files) {
-    const content = await file.text();
-    attachments.push({ name: file.name, content });
-    
-    const chip = document.createElement('div');
-    chip.className = 'attachment-chip';
-    chip.innerHTML = `<span>${file.name}</span><button onclick="this.parentElement.remove()">&times;</button>`;
-    $('attachments').appendChild(chip);
-  }
-  e.target.value = '';
-}
-
-// Terminal
-async function runTerminalCommand() {
-  const cmd = $('terminalInput').value.trim();
-  if (!cmd) return;
-  
-  $('terminalInput').value = '';
-  const output = $('terminalOutput');
-  output.innerHTML += `<div style="color:var(--green)">$ ${cmd}</div>`;
-  
-  try {
-    const res = await fetch(`${API}/api/execute/shell`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: cmd })
-    });
-    
-    const data = await res.json();
-    
-    if (data.output) output.innerHTML += `<div>${escapeHtml(data.output)}</div>`;
-    if (data.errors) output.innerHTML += `<div style="color:var(--red)">${escapeHtml(data.errors)}</div>`;
-    
-  } catch (e) {
-    output.innerHTML += `<div style="color:var(--red)">Error: ${e.message}</div>`;
-  }
-  
-  output.scrollTop = output.scrollHeight;
-}
-
-// Database
-async function dbQuery() {
-  const sql = $('sqlInput').value.trim();
-  if (!sql) return;
-  
-  try {
-    const res = await fetch(`${API}/api/db/query`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, sql })
-    });
-    
-    const data = await res.json();
-    
-    if (data.error) {
-      $('dbResults').innerHTML = `<div style="color:var(--red)">${data.error}</div>`;
-      return;
+function attachFile() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+  input.onchange = async (e) => {
+    for (const file of e.target.files) {
+      const text = await file.text();
+      files[file.name] = text;
     }
-    
-    if (data.rows) {
-      let html = '<table><thead><tr>';
-      if (data.rows.length > 0) {
-        for (const col of Object.keys(data.rows[0])) {
-          html += `<th>${col}</th>`;
-        }
-      }
-      html += '</tr></thead><tbody>';
-      
-      for (const row of data.rows) {
-        html += '<tr>';
-        for (const val of Object.values(row)) {
-          html += `<td>${val === null ? 'NULL' : val}</td>`;
-        }
-        html += '</tr>';
-      }
-      html += '</tbody></table>';
-      html += `<div style="margin-top:8px;color:var(--text-dim)">${data.rowCount} rows</div>`;
-      
-      $('dbResults').innerHTML = html;
-    } else {
-      $('dbResults').innerHTML = `<div style="color:var(--green)">✓ ${data.changes || 0} rows affected</div>`;
-    }
-    
-  } catch (e) {
-    $('dbResults').innerHTML = `<div style="color:var(--red)">${e.message}</div>`;
-  }
+    saveFiles();
+    renderFileList();
+    showToast(`Added ${e.target.files.length} file(s)`);
+  };
+  input.click();
 }
 
-async function dbSchema() {
-  try {
-    const res = await fetch(`${API}/api/db/schema?sessionId=${sessionId}`);
-    const data = await res.json();
-    
-    let html = '';
-    for (const [table, info] of Object.entries(data.schema)) {
-      html += `<div style="margin-bottom:16px"><strong>${table}</strong> (${info.rowCount} rows)<table>`;
-      html += '<thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>PK</th></tr></thead><tbody>';
-      for (const col of info.columns) {
-        html += `<tr><td>${col.name}</td><td>${col.type}</td><td>${col.nullable ? 'Yes' : 'No'}</td><td>${col.primaryKey ? '✓' : ''}</td></tr>`;
-      }
-      html += '</tbody></table></div>';
-    }
-    
-    $('dbResults').innerHTML = html || '<div style="color:var(--text-dim)">No tables yet</div>';
-    
-  } catch (e) {
-    $('dbResults').innerHTML = `<div style="color:var(--red)">${e.message}</div>`;
-  }
+// Helper functions
+function copyMessage(btn) {
+  const content = btn.closest('.message').querySelector('.message-content').innerText;
+  navigator.clipboard.writeText(content);
+  showToast('Copied!');
 }
 
-async function dbExport() {
-  try {
-    const res = await fetch(`${API}/api/db/export?sessionId=${sessionId}`);
-    const data = await res.json();
-    
-    const blob = new Blob([data.sql], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'database.sql';
-    a.click();
-    URL.revokeObjectURL(url);
-    
-  } catch (e) {
-    alert('Export failed: ' + e.message);
-  }
+function previewCode(btn) {
+  const content = btn.closest('.message').querySelector('.message-content').innerText;
+  extractFiles(content);
+  updatePreview();
+  rightPanel.classList.add('open');
 }
 
-// Git
-async function gitImport(url) {
-  url = url || $('repoUrl').value.trim();
-  if (!url) return;
-  
-  try {
-    const res = await fetch(`${API}/api/git/import`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
-    });
-    
-    const data = await res.json();
-    
-    if (data.error) {
-      alert('Import failed: ' + data.error);
-      return;
-    }
-    
-    for (const file of data.files) {
-      files[file.path] = file.content;
-    }
-    
-    saveFilesToStorage();
-    renderFileTree();
-    closeModal('gitModal');
-    addMessage('assistant', `✓ Imported ${data.files.length} files from ${data.repo}`);
-    
-  } catch (e) {
-    alert('Import failed: ' + e.message);
-  }
+function insertToFiles(btn) {
+  const content = btn.closest('.message').querySelector('.message-content').innerText;
+  extractFiles(content);
+  showToast('Added to files');
 }
 
-async function gitPush() {
-  const token = $('githubToken').value || localStorage.getItem('githubToken');
-  const repo = $('pushRepo').value.trim();
-  const message = $('commitMsg').value.trim();
-  
-  if (!token) {
-    alert('Please set your GitHub token in Settings first');
-    return;
-  }
-  
-  if (!repo) {
-    alert('Please enter a repository name (username/repo)');
-    return;
-  }
-  
-  try {
-    const filesToPush = Object.entries(files).map(([path, content]) => ({ path, content }));
-    
-    const res = await fetch(`${API}/api/git/push`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, repo, files: filesToPush, message })
-    });
-    
-    const data = await res.json();
-    
-    if (data.error) {
-      alert('Push failed: ' + data.error);
-      return;
-    }
-    
-    closeModal('gitModal');
-    addMessage('assistant', `✓ Pushed ${filesToPush.length} files to ${repo}`);
-    
-  } catch (e) {
-    alert('Push failed: ' + e.message);
-  }
-}
-
-async function loadRepos() {
-  const token = $('githubToken').value || localStorage.getItem('githubToken');
-  if (!token) {
-    $('repoList').innerHTML = '<div style="color:var(--text-dim)">Set GitHub token in Settings to see your repos</div>';
-    return;
-  }
-  
-  try {
-    const res = await fetch(`${API}/api/git/repos?token=${token}`);
-    const data = await res.json();
-    
-    $('repoList').innerHTML = data.repos.map(r => `
-      <div class="file-item" onclick="$('pushRepo').value='${r.full_name}'; switchGitTab('push')">
-        <span class="icon">📦</span>
-        <span>${r.full_name}</span>
-      </div>
-    `).join('');
-    
-  } catch (e) {
-    $('repoList').innerHTML = `<div style="color:var(--red)">${e.message}</div>`;
-  }
-}
-
-// Settings
-function loadSettings() {
-  const theme = localStorage.getItem('theme') || 'dark';
-  document.body.dataset.theme = theme;
-  
-  const githubToken = localStorage.getItem('githubToken');
-  if (githubToken && $('githubToken')) $('githubToken').value = githubToken;
-}
-
-function saveSettings() {
-  const theme = $('themeSelect').value;
-  const githubToken = $('githubToken').value;
-  
-  localStorage.setItem('theme', theme);
-  localStorage.setItem('githubToken', githubToken);
-  document.body.dataset.theme = theme;
-}
-
-// Modals
-function openModal(id) {
-  $(id).classList.remove('hidden');
+// Modal functions
+function showModal(id) {
+  $(id).classList.add('show');
+  if (id === 'dbModal') loadTables();
 }
 
 function closeModal(id) {
-  $(id).classList.add('hidden');
-  if (id === 'settingsModal') saveSettings();
+  $(id).classList.remove('show');
 }
 
-// Local storage
-function saveFilesToStorage() {
-  localStorage.setItem('files', JSON.stringify(files));
+// Toast notifications
+function showToast(message, type = 'info') {
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  
+  setTimeout(() => toast.classList.add('show'), 10);
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
 }
 
-function loadFilesFromStorage() {
-  const saved = localStorage.getItem('files');
-  if (saved) {
-    try {
-      files = JSON.parse(saved);
-    } catch (e) {}
+// Preview tab switching
+function switchPreviewTab(tab) {
+  document.querySelectorAll('.preview-tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  
+  const content = $('previewContent');
+  
+  switch(tab) {
+    case 'live':
+      content.innerHTML = '<iframe id="previewFrame" sandbox="allow-scripts allow-modals"></iframe>';
+      updatePreview();
+      break;
+    case 'html':
+      content.innerHTML = `<pre class="code-view">${escapeHtml(files['index.html'] || files['main.html'] || '')}</pre>`;
+      break;
+    case 'css':
+      content.innerHTML = `<pre class="code-view">${escapeHtml(files['style.css'] || files['main.css'] || '')}</pre>`;
+      break;
+    case 'js':
+      content.innerHTML = `<pre class="code-view">${escapeHtml(files['script.js'] || files['main.js'] || '')}</pre>`;
+      break;
+    case 'console':
+      content.innerHTML = '<div id="consoleOutput" class="console-view"></div>';
+      break;
   }
 }
 
-// Initialize
-init();
+// Clear project
+function clearProject() {
+  if (confirm('Clear all files?')) {
+    files = {};
+    currentFile = null;
+    localStorage.removeItem('ai-files');
+    renderFileList();
+    showToast('Project cleared');
+  }
+}
