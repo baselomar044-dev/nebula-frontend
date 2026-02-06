@@ -4,693 +4,627 @@
 
 class NebulaApp {
   constructor() {
-    this.user = null;
     this.currentProject = null;
     this.currentFile = null;
-    this.projects = [];
-    this.files = [];
-    this.conversations = [];
-    this.currentConversation = null;
-    this.attachments = [];
-    this.ws = null;
+    this.messages = [];
+    this.isStreaming = false;
+    this.previewContent = '';
     
     this.init();
   }
-  
-  async init() {
-    // Initialize i18n
-    I18N.init();
-    
-    // Check auth
-    API.loadToken();
-    if (API.token) {
-      try {
-        const { user } = await API.getMe();
-        this.user = user;
-        this.showMainApp();
-        await this.loadProjects();
-      } catch (e) {
-        API.setToken(null);
-        this.showAuth();
-      }
-    } else {
-      this.showAuth();
-    }
-    
-    // Setup event listeners
-    this.setupEventListeners();
-    
-    // Hide loading
-    document.getElementById('loading').classList.add('hidden');
+
+  init() {
+    this.cacheElements();
+    this.bindEvents();
+    this.loadProjects();
+    this.autoResize();
   }
-  
-  setupEventListeners() {
-    // Auth
-    document.getElementById('auth-form').addEventListener('submit', (e) => this.handleAuth(e));
-    document.getElementById('auth-toggle').addEventListener('click', () => this.toggleAuthMode());
-    document.getElementById('auth-lang-toggle').addEventListener('click', () => I18N.toggleLanguage());
-    document.getElementById('auth-theme-toggle').addEventListener('click', () => this.toggleTheme());
-    
-    // Header
-    document.getElementById('sidebar-toggle').addEventListener('click', () => this.toggleSidebar());
-    document.getElementById('lang-toggle').addEventListener('click', () => I18N.toggleLanguage());
-    document.getElementById('theme-toggle').addEventListener('click', () => this.toggleTheme());
-    document.getElementById('settings-btn').addEventListener('click', () => this.openModal('settings-modal'));
-    
-    // Projects
-    document.getElementById('new-project-btn').addEventListener('click', () => this.openModal('new-project-modal'));
-    document.getElementById('welcome-new-project').addEventListener('click', () => this.openModal('new-project-modal'));
-    document.getElementById('welcome-import').addEventListener('click', () => document.getElementById('import-input').click());
-    document.getElementById('create-project').addEventListener('click', () => this.createProject());
-    
-    // Files
-    document.getElementById('import-btn').addEventListener('click', () => document.getElementById('import-input').click());
-    document.getElementById('export-btn').addEventListener('click', () => this.exportProject());
-    document.getElementById('upload-btn').addEventListener('click', () => document.getElementById('upload-input').click());
-    document.getElementById('import-input').addEventListener('change', (e) => this.importProject(e));
-    document.getElementById('upload-input').addEventListener('change', (e) => this.uploadFiles(e));
-    
-    // Preview
-    document.getElementById('preview-toggle').addEventListener('click', () => this.togglePreview());
-    document.getElementById('preview-refresh').addEventListener('click', () => this.refreshPreview());
-    document.getElementById('preview-close').addEventListener('click', () => this.togglePreview());
+
+  cacheElements() {
+    // Panels
+    this.leftPanel = document.getElementById('leftPanel');
+    this.rightPanel = document.getElementById('rightPanel');
+    this.leftToggle = document.getElementById('leftToggle');
+    this.rightToggle = document.getElementById('rightToggle');
     
     // Chat
-    document.getElementById('chat-input').addEventListener('keydown', (e) => {
+    this.messagesContainer = document.getElementById('messagesContainer');
+    this.messageInput = document.getElementById('messageInput');
+    this.sendBtn = document.getElementById('sendBtn');
+    this.modelSelect = document.getElementById('modelSelect');
+    
+    // Files
+    this.projectSelect = document.getElementById('projectSelect');
+    this.fileTree = document.getElementById('fileTree');
+    
+    // Preview
+    this.previewFrame = document.getElementById('previewFrame');
+    this.previewEmpty = document.getElementById('previewEmpty');
+    this.previewContainer = document.getElementById('previewContainer');
+    
+    // Modals
+    this.codeModal = document.getElementById('codeModal');
+    this.projectModal = document.getElementById('projectModal');
+  }
+
+  bindEvents() {
+    // Panel toggles
+    this.leftToggle.addEventListener('click', () => this.togglePanel('left'));
+    this.rightToggle.addEventListener('click', () => this.togglePanel('right'));
+    document.getElementById('leftClose').addEventListener('click', () => this.togglePanel('left'));
+    document.getElementById('rightClose').addEventListener('click', () => this.togglePanel('right'));
+
+    // Chat
+    this.sendBtn.addEventListener('click', () => this.sendMessage());
+    this.messageInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.sendMessage();
       }
     });
-    document.getElementById('send-btn').addEventListener('click', () => this.sendMessage());
-    document.getElementById('attach-file-btn').addEventListener('click', () => this.attachFile());
-    document.getElementById('attach-image-btn').addEventListener('click', () => document.getElementById('image-input').click());
-    document.getElementById('image-input').addEventListener('change', (e) => this.attachImage(e));
-    
-    // Deploy
-    document.getElementById('deploy-btn').addEventListener('click', () => this.openModal('deploy-modal'));
-    document.querySelectorAll('.deploy-option').forEach(btn => {
-      btn.addEventListener('click', () => this.deploy(btn.dataset.platform));
+    this.messageInput.addEventListener('input', () => this.autoResize());
+
+    // Quick actions
+    document.querySelectorAll('.quick-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.messageInput.value = btn.dataset.prompt;
+        this.messageInput.focus();
+      });
     });
-    
-    // Settings
-    document.getElementById('save-settings').addEventListener('click', () => this.saveSettings());
-    document.querySelectorAll('.settings-tabs .tab').forEach(tab => {
-      tab.addEventListener('click', () => this.switchSettingsTab(tab.dataset.tab));
+
+    // Projects
+    document.getElementById('newProjectBtn').addEventListener('click', () => {
+      this.projectModal.classList.add('open');
     });
-    
-    // Modals
-    document.querySelectorAll('.modal-close').forEach(btn => {
-      btn.addEventListener('click', () => this.closeModals());
+    document.getElementById('projectModalClose').addEventListener('click', () => {
+      this.projectModal.classList.remove('open');
     });
-    document.querySelectorAll('.modal').forEach(modal => {
+    document.getElementById('createProjectBtn').addEventListener('click', () => this.createProject());
+    this.projectSelect.addEventListener('change', () => this.loadProjectFiles());
+
+    // Files
+    document.getElementById('newFileBtn').addEventListener('click', () => this.createFile());
+    document.getElementById('newFolderBtn').addEventListener('click', () => this.createFolder());
+
+    // Preview
+    document.getElementById('refreshPreview').addEventListener('click', () => this.refreshPreview());
+    document.getElementById('openExternal').addEventListener('click', () => this.openPreviewExternal());
+    document.querySelectorAll('.device-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.setPreviewDevice(btn));
+    });
+
+    // Code modal
+    document.getElementById('codeModalClose').addEventListener('click', () => {
+      this.codeModal.classList.remove('open');
+    });
+    document.getElementById('copyCodeBtn').addEventListener('click', () => this.copyCode());
+    document.getElementById('previewCodeBtn').addEventListener('click', () => this.previewModalCode());
+
+    // Close modals on backdrop click
+    [this.codeModal, this.projectModal].forEach(modal => {
       modal.addEventListener('click', (e) => {
-        if (e.target === modal) this.closeModals();
+        if (e.target === modal) modal.classList.remove('open');
+      });
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        this.codeModal.classList.remove('open');
+        this.projectModal.classList.remove('open');
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+        e.preventDefault();
+        this.togglePanel('left');
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
+        e.preventDefault();
+        this.togglePanel('right');
+      }
+    });
+  }
+
+  // ============================================
+  // PANEL MANAGEMENT
+  // ============================================
+
+  togglePanel(side) {
+    const panel = side === 'left' ? this.leftPanel : this.rightPanel;
+    const toggle = side === 'left' ? this.leftToggle : this.rightToggle;
+    
+    panel.classList.toggle('open');
+    toggle.classList.toggle('hidden', panel.classList.contains('open'));
+  }
+
+  // ============================================
+  // CHAT FUNCTIONALITY
+  // ============================================
+
+  autoResize() {
+    this.messageInput.style.height = 'auto';
+    this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 150) + 'px';
+  }
+
+  async sendMessage() {
+    const message = this.messageInput.value.trim();
+    if (!message || this.isStreaming) return;
+
+    // Clear input
+    this.messageInput.value = '';
+    this.autoResize();
+
+    // Hide welcome message
+    const welcome = this.messagesContainer.querySelector('.welcome-message');
+    if (welcome) welcome.remove();
+
+    // Add user message
+    this.addMessage('user', message);
+
+    // Add AI typing indicator
+    const typingId = this.addTypingIndicator();
+
+    // Get selected model
+    const model = this.modelSelect.value;
+
+    try {
+      this.isStreaming = true;
+      this.sendBtn.disabled = true;
+
+      const response = await fetch(`${window.NEBULA_CONFIG.API_URL}/api/ai/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getToken()}`
+        },
+        body: JSON.stringify({
+          message,
+          model: model === 'auto' ? null : model,
+          projectId: this.currentProject?.id
+        })
+      });
+
+      // Remove typing indicator
+      this.removeTypingIndicator(typingId);
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to get response');
+      }
+
+      const data = await response.json();
+      this.addMessage('assistant', data.response);
+
+      // Check for code in response and update preview
+      this.extractAndPreviewCode(data.response);
+
+    } catch (error) {
+      this.removeTypingIndicator(typingId);
+      this.addMessage('assistant', `❌ Error: ${error.message}`);
+    } finally {
+      this.isStreaming = false;
+      this.sendBtn.disabled = false;
+    }
+  }
+
+  addMessage(role, content) {
+    const messageEl = document.createElement('div');
+    messageEl.className = `message ${role}`;
+    
+    const avatar = role === 'user' ? '👤' : '✨';
+    const formattedContent = this.formatMessage(content);
+    
+    messageEl.innerHTML = `
+      <div class="message-avatar">${avatar}</div>
+      <div class="message-content">${formattedContent}</div>
+    `;
+    
+    this.messagesContainer.appendChild(messageEl);
+    this.scrollToBottom();
+    
+    // Add click handlers for code blocks
+    messageEl.querySelectorAll('.code-action-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const action = e.target.dataset.action;
+        const code = e.target.closest('pre').querySelector('code').textContent;
+        const lang = e.target.dataset.lang || '';
+        
+        if (action === 'copy') {
+          navigator.clipboard.writeText(code);
+          e.target.textContent = '✓ Copied';
+          setTimeout(() => e.target.textContent = 'Copy', 2000);
+        } else if (action === 'preview') {
+          this.updatePreview(code, lang);
+          this.togglePanel('right');
+          if (!this.rightPanel.classList.contains('open')) {
+            this.togglePanel('right');
+          }
+        } else if (action === 'expand') {
+          this.showCodeModal(code, lang);
+        }
       });
     });
     
-    // Editor
-    document.getElementById('code-editor').addEventListener('input', () => this.handleEditorChange());
+    this.messages.push({ role, content });
+  }
+
+  formatMessage(content) {
+    // Escape HTML
+    let formatted = content
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
     
-    // Auto-resize chat input
-    const chatInput = document.getElementById('chat-input');
-    chatInput.addEventListener('input', () => {
-      chatInput.style.height = 'auto';
-      chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+    // Format code blocks
+    formatted = formatted.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+      const language = lang || 'code';
+      const isPreviewable = ['html', 'css', 'javascript', 'js'].includes(lang.toLowerCase());
+      return `
+        <pre data-lang="${language}">
+          <div class="code-actions">
+            <button class="code-action-btn" data-action="copy" data-lang="${lang}">Copy</button>
+            ${isPreviewable ? `<button class="code-action-btn" data-action="preview" data-lang="${lang}">Preview</button>` : ''}
+            <button class="code-action-btn" data-action="expand" data-lang="${lang}">Expand</button>
+          </div>
+          <code>${code.trim()}</code>
+        </pre>
+      `;
     });
-  }
-  
-  // ============ AUTH ============
-  showAuth() {
-    document.getElementById('auth-screen').classList.remove('hidden');
-    document.getElementById('main-app').classList.add('hidden');
-  }
-  
-  showMainApp() {
-    document.getElementById('auth-screen').classList.add('hidden');
-    document.getElementById('main-app').classList.remove('hidden');
-    this.connectWebSocket();
-  }
-  
-  isRegistering = false;
-  
-  toggleAuthMode() {
-    this.isRegistering = !this.isRegistering;
-    document.getElementById('auth-name-group').classList.toggle('hidden', !this.isRegistering);
-    document.getElementById('auth-submit').querySelector('span').textContent = 
-      I18N.t(this.isRegistering ? 'createAccount' : 'login');
-    document.getElementById('auth-toggle').querySelector('span').textContent = 
-      I18N.t(this.isRegistering ? 'login' : 'createAccount');
-  }
-  
-  async handleAuth(e) {
-    e.preventDefault();
-    const email = document.getElementById('auth-email').value;
-    const password = document.getElementById('auth-password').value;
-    const name = document.getElementById('auth-name').value;
     
-    try {
-      this.setStatus('loading', I18N.t('connecting'));
+    // Format inline code
+    formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
+    
+    // Format bold
+    formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    
+    // Format italic
+    formatted = formatted.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    
+    // Format line breaks
+    formatted = formatted.replace(/\n/g, '<br>');
+    
+    return formatted;
+  }
+
+  addTypingIndicator() {
+    const id = 'typing-' + Date.now();
+    const typingEl = document.createElement('div');
+    typingEl.className = 'message assistant';
+    typingEl.id = id;
+    typingEl.innerHTML = `
+      <div class="message-avatar">✨</div>
+      <div class="message-content">
+        <div class="typing-indicator">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+    `;
+    this.messagesContainer.appendChild(typingEl);
+    this.scrollToBottom();
+    return id;
+  }
+
+  removeTypingIndicator(id) {
+    const el = document.getElementById(id);
+    if (el) el.remove();
+  }
+
+  scrollToBottom() {
+    this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+  }
+
+  // ============================================
+  // PREVIEW FUNCTIONALITY
+  // ============================================
+
+  extractAndPreviewCode(response) {
+    // Find HTML, CSS, or JS code blocks
+    const htmlMatch = response.match(/```html\n?([\s\S]*?)```/i);
+    const cssMatch = response.match(/```css\n?([\s\S]*?)```/i);
+    const jsMatch = response.match(/```(?:javascript|js)\n?([\s\S]*?)```/i);
+    
+    if (htmlMatch || cssMatch || jsMatch) {
+      let html = htmlMatch ? htmlMatch[1] : '';
+      const css = cssMatch ? `<style>${cssMatch[1]}</style>` : '';
+      const js = jsMatch ? `<script>${jsMatch[1]}</script>` : '';
       
-      let result;
-      if (this.isRegistering) {
-        result = await API.register(email, password, name);
-      } else {
-        result = await API.login(email, password);
+      // If no HTML but has CSS/JS, create wrapper
+      if (!html && (css || js)) {
+        html = '<div id="app"></div>';
       }
       
-      API.setToken(result.token);
-      this.user = result.user;
-      this.showMainApp();
-      await this.loadProjects();
-      this.setStatus('success', I18N.t('ready'));
-    } catch (error) {
-      this.setStatus('error', error.message);
-      alert(error.message);
+      // Check if HTML is a full document
+      if (!html.includes('<!DOCTYPE') && !html.includes('<html')) {
+        html = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            ${css}
+          </head>
+          <body>
+            ${html}
+            ${js}
+          </body>
+          </html>
+        `;
+      } else {
+        // Insert CSS and JS into existing document
+        if (css) html = html.replace('</head>', `${css}</head>`);
+        if (js) html = html.replace('</body>', `${js}</body>`);
+      }
+      
+      this.updatePreview(html, 'html');
     }
   }
-  
-  // ============ PROJECTS ============
+
+  updatePreview(code, lang) {
+    this.previewContent = code;
+    
+    if (lang === 'html' || code.includes('<!DOCTYPE') || code.includes('<html')) {
+      this.previewFrame.srcdoc = code;
+    } else if (lang === 'css') {
+      this.previewFrame.srcdoc = `
+        <!DOCTYPE html>
+        <html>
+        <head><style>${code}</style></head>
+        <body><div class="preview-demo">CSS Preview</div></body>
+        </html>
+      `;
+    } else if (lang === 'javascript' || lang === 'js') {
+      this.previewFrame.srcdoc = `
+        <!DOCTYPE html>
+        <html>
+        <head></head>
+        <body>
+          <div id="output"></div>
+          <script>
+            const output = document.getElementById('output');
+            const log = console.log;
+            console.log = (...args) => {
+              output.innerHTML += args.join(' ') + '<br>';
+              log(...args);
+            };
+            ${code}
+          </script>
+        </body>
+        </html>
+      `;
+    }
+    
+    this.previewEmpty.classList.add('hidden');
+    
+    // Open preview panel if not open
+    if (!this.rightPanel.classList.contains('open')) {
+      this.togglePanel('right');
+    }
+  }
+
+  refreshPreview() {
+    if (this.previewContent) {
+      this.previewFrame.srcdoc = this.previewContent;
+    }
+  }
+
+  openPreviewExternal() {
+    if (this.previewContent) {
+      const blob = new Blob([this.previewContent], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    }
+  }
+
+  setPreviewDevice(btn) {
+    document.querySelectorAll('.device-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    this.previewContainer.style.maxWidth = btn.dataset.width;
+    this.previewContainer.style.margin = btn.dataset.width === '100%' ? '16px' : '16px auto';
+  }
+
+  // ============================================
+  // CODE MODAL
+  // ============================================
+
+  showCodeModal(code, lang) {
+    document.getElementById('codeModalTitle').textContent = lang || 'Code';
+    document.getElementById('codeContent').querySelector('code').textContent = code;
+    this.codeModal.dataset.code = code;
+    this.codeModal.dataset.lang = lang;
+    this.codeModal.classList.add('open');
+  }
+
+  copyCode() {
+    const code = this.codeModal.dataset.code;
+    navigator.clipboard.writeText(code);
+    document.getElementById('copyCodeBtn').textContent = '✓ Copied!';
+    setTimeout(() => {
+      document.getElementById('copyCodeBtn').textContent = '📋 Copy';
+    }, 2000);
+  }
+
+  previewModalCode() {
+    const code = this.codeModal.dataset.code;
+    const lang = this.codeModal.dataset.lang;
+    this.updatePreview(code, lang);
+    this.codeModal.classList.remove('open');
+  }
+
+  // ============================================
+  // PROJECT & FILE MANAGEMENT
+  // ============================================
+
   async loadProjects() {
     try {
-      const { projects } = await API.getProjects();
-      this.projects = projects;
-      this.renderProjects();
+      const response = await fetch(`${window.NEBULA_CONFIG.API_URL}/api/projects`, {
+        headers: { 'Authorization': `Bearer ${this.getToken()}` }
+      });
       
-      if (projects.length > 0) {
-        await this.selectProject(projects[0].id);
+      if (response.ok) {
+        const projects = await response.json();
+        this.projectSelect.innerHTML = '<option value="">Select Project...</option>';
+        projects.forEach(project => {
+          const option = document.createElement('option');
+          option.value = project.id;
+          option.textContent = project.name;
+          this.projectSelect.appendChild(option);
+        });
       }
     } catch (error) {
       console.error('Failed to load projects:', error);
     }
   }
-  
-  renderProjects() {
-    const list = document.getElementById('project-list');
-    list.innerHTML = this.projects.map(p => `
-      <div class="project-item ${p.id === this.currentProject?.id ? 'active' : ''}" data-id="${p.id}">
-        <span>📁</span>
-        <span>${p.name}</span>
-      </div>
-    `).join('');
-    
-    list.querySelectorAll('.project-item').forEach(item => {
-      item.addEventListener('click', () => this.selectProject(item.dataset.id));
-    });
-  }
-  
-  async selectProject(id) {
-    try {
-      const { project, files } = await API.getProject(id);
-      this.currentProject = project;
-      this.files = files;
-      
-      document.getElementById('current-project-name').textContent = project.name;
-      document.getElementById('welcome-state').classList.add('hidden');
-      document.getElementById('editor-area').classList.remove('hidden');
-      
-      this.renderProjects();
-      this.renderFileTree();
-      
-      // Auto-select first file
-      const firstFile = files.find(f => !f.is_directory);
-      if (firstFile) {
-        await this.selectFile(firstFile.id);
-      }
-    } catch (error) {
-      console.error('Failed to select project:', error);
-    }
-  }
-  
+
   async createProject() {
-    const name = document.getElementById('new-project-name').value;
-    const description = document.getElementById('new-project-desc').value;
-    const framework = document.getElementById('new-project-framework').value;
-    
+    const name = document.getElementById('projectNameInput').value.trim();
     if (!name) return;
     
     try {
-      const { project } = await API.createProject({ name, description, framework });
-      this.projects.unshift(project);
-      this.renderProjects();
-      await this.selectProject(project.id);
-      this.closeModals();
+      const response = await fetch(`${window.NEBULA_CONFIG.API_URL}/api/projects`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getToken()}`
+        },
+        body: JSON.stringify({ name })
+      });
       
-      // Clear form
-      document.getElementById('new-project-name').value = '';
-      document.getElementById('new-project-desc').value = '';
+      if (response.ok) {
+        const project = await response.json();
+        this.projectModal.classList.remove('open');
+        document.getElementById('projectNameInput').value = '';
+        await this.loadProjects();
+        this.projectSelect.value = project.id;
+        this.loadProjectFiles();
+      }
     } catch (error) {
-      alert(error.message);
+      console.error('Failed to create project:', error);
     }
   }
-  
-  async importProject(e) {
-    const file = e.target.files[0];
-    if (!file) return;
+
+  async loadProjectFiles() {
+    const projectId = this.projectSelect.value;
+    if (!projectId) {
+      this.fileTree.innerHTML = '<div class="empty-state">No project selected</div>';
+      this.currentProject = null;
+      return;
+    }
     
     try {
-      this.setStatus('loading', I18N.t('processing'));
-      const name = file.name.replace('.zip', '');
-      const { project, files } = await API.importProject(file, name);
+      const response = await fetch(`${window.NEBULA_CONFIG.API_URL}/api/projects/${projectId}/files`, {
+        headers: { 'Authorization': `Bearer ${this.getToken()}` }
+      });
       
-      this.projects.unshift(project);
-      this.currentProject = project;
-      this.files = files;
-      
-      this.renderProjects();
-      this.renderFileTree();
-      
-      document.getElementById('welcome-state').classList.add('hidden');
-      document.getElementById('editor-area').classList.remove('hidden');
-      document.getElementById('current-project-name').textContent = project.name;
-      
-      this.setStatus('success', I18N.t('ready'));
+      if (response.ok) {
+        const files = await response.json();
+        this.currentProject = { id: projectId };
+        this.renderFileTree(files);
+      }
     } catch (error) {
-      this.setStatus('error', error.message);
-      alert(error.message);
+      console.error('Failed to load files:', error);
+    }
+  }
+
+  renderFileTree(files) {
+    if (!files || files.length === 0) {
+      this.fileTree.innerHTML = '<div class="empty-state">No files yet</div>';
+      return;
     }
     
-    e.target.value = '';
-  }
-  
-  exportProject() {
-    if (!this.currentProject) return;
-    window.open(API.getExportUrl(this.currentProject.id), '_blank');
-  }
-  
-  // ============ FILES ============
-  renderFileTree() {
-    const tree = document.getElementById('file-tree');
-    const buildTree = (files, parentPath = '') => {
-      return files
-        .filter(f => {
-          const dir = f.path.substring(0, f.path.lastIndexOf('/')) || '/';
-          return dir === parentPath || (parentPath === '' && dir === '/');
-        })
-        .map(f => {
-          const isDir = f.is_directory;
-          const depth = (f.path.match(/\//g) || []).length - 1;
-          const children = isDir ? buildTree(files, f.path) : '';
-          
-          return `
-            <div class="file-tree-item ${f.id === this.currentFile?.id ? 'active' : ''}" 
-                 data-id="${f.id}" 
-                 data-path="${f.path}"
-                 style="--depth: ${depth}">
-              <span>${isDir ? '📁' : this.getFileIcon(f.name)}</span>
-              <span>${f.name}</span>
-            </div>
-            ${children}
-          `;
-        }).join('');
-    };
+    this.fileTree.innerHTML = files.map(file => `
+      <div class="file-item" data-id="${file.id}" data-path="${file.path}">
+        <span class="icon">${file.type === 'folder' ? '📁' : this.getFileIcon(file.name)}</span>
+        <span class="name">${file.name}</span>
+      </div>
+    `).join('');
     
-    tree.innerHTML = buildTree(this.files);
-    
-    tree.querySelectorAll('.file-tree-item').forEach(item => {
-      item.addEventListener('click', () => {
-        const file = this.files.find(f => f.id === item.dataset.id);
-        if (file && !file.is_directory) {
-          this.selectFile(file.id);
-        }
-      });
+    this.fileTree.querySelectorAll('.file-item').forEach(item => {
+      item.addEventListener('click', () => this.openFile(item.dataset.id));
     });
   }
-  
-  getFileIcon(name) {
-    const ext = name.split('.').pop().toLowerCase();
+
+  getFileIcon(filename) {
+    const ext = filename.split('.').pop().toLowerCase();
     const icons = {
       js: '📜', ts: '📘', jsx: '⚛️', tsx: '⚛️',
       html: '🌐', css: '🎨', scss: '🎨',
       json: '📋', md: '📝', txt: '📄',
-      png: '🖼️', jpg: '🖼️', svg: '🎭',
-      py: '🐍', rb: '💎', go: '🔵',
+      py: '🐍', rb: '💎', go: '🔷',
+      jpg: '🖼️', png: '🖼️', svg: '🎭',
+      default: '📄'
     };
-    return icons[ext] || '📄';
+    return icons[ext] || icons.default;
   }
-  
-  async selectFile(id) {
+
+  async openFile(fileId) {
     try {
-      const { file } = await API.getFile(this.currentProject.id, id);
-      this.currentFile = file;
+      const response = await fetch(`${window.NEBULA_CONFIG.API_URL}/api/files/${fileId}`, {
+        headers: { 'Authorization': `Bearer ${this.getToken()}` }
+      });
       
-      document.getElementById('code-editor').value = file.content || '';
-      this.renderFileTree();
-      this.updateEditorTabs();
-    } catch (error) {
-      console.error('Failed to select file:', error);
-    }
-  }
-  
-  updateEditorTabs() {
-    const tabs = document.getElementById('editor-tabs');
-    if (!this.currentFile) {
-      tabs.innerHTML = '';
-      return;
-    }
-    
-    tabs.innerHTML = `
-      <div class="editor-tab active">
-        <span>${this.getFileIcon(this.currentFile.name)}</span>
-        <span>${this.currentFile.name}</span>
-        <span class="close">×</span>
-      </div>
-    `;
-  }
-  
-  async uploadFiles(e) {
-    const files = Array.from(e.target.files);
-    if (!files.length || !this.currentProject) return;
-    
-    try {
-      this.setStatus('loading', I18N.t('processing'));
-      
-      for (const file of files) {
-        await API.uploadFile(this.currentProject.id, file);
-      }
-      
-      // Reload project files
-      const { files: newFiles } = await API.getProject(this.currentProject.id);
-      this.files = newFiles;
-      this.renderFileTree();
-      
-      this.setStatus('success', I18N.t('ready'));
-    } catch (error) {
-      this.setStatus('error', error.message);
-    }
-    
-    e.target.value = '';
-  }
-  
-  handleEditorChange() {
-    // Auto-save after 1 second of no typing
-    clearTimeout(this.saveTimeout);
-    this.saveTimeout = setTimeout(() => this.saveCurrentFile(), 1000);
-  }
-  
-  async saveCurrentFile() {
-    if (!this.currentFile || !this.currentProject) return;
-    
-    const content = document.getElementById('code-editor').value;
-    
-    try {
-      await API.saveFile(this.currentProject.id, this.currentFile.path, content);
-      this.setStatus('success', I18N.t('saved'));
-    } catch (error) {
-      this.setStatus('error', I18N.t('error'));
-    }
-  }
-  
-  // ============ PREVIEW ============
-  togglePreview() {
-    const preview = document.getElementById('preview-area');
-    preview.classList.toggle('hidden');
-    if (!preview.classList.contains('hidden')) {
-      this.refreshPreview();
-    }
-  }
-  
-  refreshPreview() {
-    if (!this.currentProject) return;
-    
-    const iframe = document.getElementById('preview-frame');
-    const html = this.files.find(f => f.name === 'index.html');
-    
-    if (html) {
-      // Build preview with inline styles and scripts
-      let content = html.content || '';
-      
-      // Inject CSS
-      const css = this.files.find(f => f.name.endsWith('.css'));
-      if (css) {
-        content = content.replace('</head>', `<style>${css.content}</style></head>`);
-      }
-      
-      // Inject JS
-      const js = this.files.find(f => f.name.endsWith('.js') && f.name !== 'sw.js');
-      if (js) {
-        content = content.replace('</body>', `<script>${js.content}</script></body>`);
-      }
-      
-      iframe.srcdoc = content;
-    }
-  }
-  
-  // ============ CHAT / AI ============
-  async sendMessage() {
-    const input = document.getElementById('chat-input');
-    const message = input.value.trim();
-    
-    if (!message || !this.currentProject) return;
-    
-    // Add user message to UI
-    this.addChatMessage('user', message);
-    input.value = '';
-    input.style.height = 'auto';
-    
-    try {
-      this.setStatus('loading', I18N.t('processing'));
-      
-      const result = await API.chat(
-        this.currentProject.id,
-        message,
-        this.attachments.map(a => a.path),
-        'auto'
-      );
-      
-      // Add AI response
-      this.addChatMessage('assistant', result.message.content);
-      
-      // Auto-apply code changes
-      if (result.codeBlocks && result.codeBlocks.length > 0) {
-        for (const block of result.codeBlocks) {
-          if (block.path) {
-            await API.saveFile(this.currentProject.id, block.path, block.code);
-          }
-        }
+      if (response.ok) {
+        const file = await response.json();
+        this.currentFile = file;
         
-        // Reload files
-        const { files } = await API.getProject(this.currentProject.id);
-        this.files = files;
-        this.renderFileTree();
-        this.refreshPreview();
+        // Highlight in tree
+        this.fileTree.querySelectorAll('.file-item').forEach(item => {
+          item.classList.toggle('active', item.dataset.id === fileId);
+        });
+        
+        // If it's previewable, show in preview
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (['html', 'htm'].includes(ext)) {
+          this.updatePreview(file.content, 'html');
+        }
       }
-      
-      // Update usage
-      document.getElementById('usage-info').textContent = `$${result.cost}`;
-      
-      this.setStatus('success', I18N.t('ready'));
-      this.clearAttachments();
     } catch (error) {
-      this.addChatMessage('assistant', `Error: ${error.message}`);
-      this.setStatus('error', error.message);
+      console.error('Failed to open file:', error);
     }
   }
-  
-  addChatMessage(role, content) {
-    const messages = document.getElementById('chat-messages');
-    
-    // Remove welcome message
-    const welcome = messages.querySelector('.chat-welcome');
-    if (welcome) welcome.remove();
-    
-    // Format code blocks
-    const formatted = content.replace(/```(\w+)?(?::([^\n]+))?\n([\s\S]*?)```/g, 
-      (match, lang, path, code) => {
-        return `<pre><code class="language-${lang || 'text'}">${this.escapeHtml(code)}</code></pre>`;
-      }
-    );
-    
-    const div = document.createElement('div');
-    div.className = `chat-message ${role}`;
-    div.innerHTML = formatted;
-    
-    messages.appendChild(div);
-    messages.scrollTop = messages.scrollHeight;
-  }
-  
-  escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
-  
-  attachFile() {
-    const files = this.files.filter(f => !f.is_directory);
-    const menu = files.map(f => `<div class="attach-option" data-path="${f.path}">${f.name}</div>`).join('');
-    // Show picker - simplified for now
-    const path = prompt('Enter file path to attach:');
-    if (path) {
-      this.attachments.push({ path, name: path.split('/').pop() });
-      this.renderAttachments();
+
+  createFile() {
+    const name = prompt('File name:');
+    if (name && this.currentProject) {
+      this.saveFile(name, '');
     }
   }
-  
-  attachImage(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    
-    // Upload and attach
-    // For now, just note it
-    this.attachments.push({ name: file.name, type: 'image', file });
-    this.renderAttachments();
-    e.target.value = '';
+
+  createFolder() {
+    const name = prompt('Folder name:');
+    if (name && this.currentProject) {
+      // TODO: Implement folder creation
+      console.log('Create folder:', name);
+    }
   }
-  
-  renderAttachments() {
-    const container = document.getElementById('chat-attachments');
-    container.innerHTML = this.attachments.map((a, i) => `
-      <div class="chat-attachment">
-        <span>${a.name}</span>
-        <button onclick="app.removeAttachment(${i})">×</button>
-      </div>
-    `).join('');
-  }
-  
-  removeAttachment(index) {
-    this.attachments.splice(index, 1);
-    this.renderAttachments();
-  }
-  
-  clearAttachments() {
-    this.attachments = [];
-    this.renderAttachments();
-  }
-  
-  // ============ DEPLOY ============
-  async deploy(platform) {
-    if (!this.currentProject) return;
-    
-    const statusDiv = document.getElementById('deploy-status');
-    const messageEl = document.getElementById('deploy-message');
-    const urlEl = document.getElementById('deploy-url');
-    
-    statusDiv.classList.remove('hidden');
-    urlEl.classList.add('hidden');
-    messageEl.textContent = I18N.t('deploying');
-    
+
+  async saveFile(name, content) {
     try {
-      const result = await API.deploy(this.currentProject.id, platform);
+      const response = await fetch(`${window.NEBULA_CONFIG.API_URL}/api/projects/${this.currentProject.id}/files`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.getToken()}`
+        },
+        body: JSON.stringify({ name, content, path: '/' + name })
+      });
       
-      if (result.success && result.url) {
-        messageEl.textContent = I18N.t('deploySuccess');
-        urlEl.href = result.url;
-        urlEl.textContent = result.url;
-        urlEl.classList.remove('hidden');
-      } else {
-        throw new Error('No URL returned');
+      if (response.ok) {
+        this.loadProjectFiles();
       }
     } catch (error) {
-      messageEl.textContent = `${I18N.t('deployFailed')}: ${error.message}`;
+      console.error('Failed to save file:', error);
     }
   }
-  
-  // ============ SETTINGS ============
-  openModal(id) {
-    document.getElementById(id).classList.remove('hidden');
-  }
-  
-  closeModals() {
-    document.querySelectorAll('.modal').forEach(m => m.classList.add('hidden'));
-  }
-  
-  switchSettingsTab(tab) {
-    document.querySelectorAll('.settings-tabs .tab').forEach(t => {
-      t.classList.toggle('active', t.dataset.tab === tab);
-    });
-    document.querySelectorAll('.settings-content').forEach(c => {
-      c.classList.add('hidden');
-    });
-    document.getElementById(`settings-${tab}`).classList.remove('hidden');
-  }
-  
-  async saveSettings() {
-    // Save API keys
-    const providers = ['anthropic', 'openai', 'google', 'groq', 'deepseek'];
-    for (const provider of providers) {
-      const key = document.getElementById(`key-${provider}`).value;
-      if (key) {
-        await API.saveApiKey(provider, key);
-      }
-    }
-    
-    // Save deploy tokens
-    const tokens = ['vercel', 'netlify', 'railway'];
-    for (const token of tokens) {
-      const value = document.getElementById(`token-${token}`).value;
-      if (value) {
-        await API.saveApiKey(token, value);
-      }
-    }
-    
-    // Save preferences
-    const lang = document.getElementById('pref-language').value;
-    const theme = document.getElementById('pref-theme').value;
-    
-    I18N.setLanguage(lang);
-    this.setTheme(theme);
-    
-    await API.updateProfile({ language: lang, theme });
-    
-    this.closeModals();
-    this.setStatus('success', I18N.t('saved'));
-  }
-  
-  // ============ THEME ============
-  toggleTheme() {
-    const current = document.body.classList.contains('theme-dark') ? 'dark' : 'light';
-    this.setTheme(current === 'dark' ? 'light' : 'dark');
-  }
-  
-  setTheme(theme) {
-    document.body.classList.remove('theme-dark', 'theme-light');
-    document.body.classList.add(`theme-${theme}`);
-    localStorage.setItem('nebula_theme', theme);
-    
-    const themeColor = theme === 'dark' ? '#0a0a1a' : '#f5f0e8';
-    document.querySelector('meta[name="theme-color"]').setAttribute('content', themeColor);
-  }
-  
-  // ============ UI HELPERS ============
-  toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('open');
-  }
-  
-  setStatus(type, text) {
-    const indicator = document.getElementById('status-indicator');
-    const textEl = document.getElementById('status-text');
-    
-    indicator.className = 'status-indicator';
-    if (type === 'loading') indicator.classList.add('loading');
-    if (type === 'error') indicator.classList.add('error');
-    
-    textEl.textContent = text;
-  }
-  
-  // ============ WEBSOCKET ============
-  connectWebSocket() {
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    this.ws = new WebSocket(`${protocol}//${location.host}/ws`);
-    
-    this.ws.onopen = () => {
-      if (this.currentProject) {
-        this.ws.send(JSON.stringify({ type: 'subscribe', projectId: this.currentProject.id }));
-      }
-    };
-    
-    this.ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      // Handle real-time updates
-      if (data.type === 'file-updated') {
-        this.renderFileTree();
-      }
-    };
-    
-    this.ws.onclose = () => {
-      setTimeout(() => this.connectWebSocket(), 3000);
-    };
+
+  // ============================================
+  // AUTH
+  // ============================================
+
+  getToken() {
+    return localStorage.getItem('nebula_token') || 'guest';
   }
 }
 
 // Initialize app
-const app = new NebulaApp();
+document.addEventListener('DOMContentLoaded', () => {
+  window.app = new NebulaApp();
+});
