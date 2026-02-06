@@ -1,630 +1,554 @@
-// ============================================
-// NEBULA AI - Main Application
-// ============================================
+// AI App - Fast & Powerful
+const API = 'https://nebula-api-production.up.railway.app';
+let token = localStorage.getItem('token');
+let files = {};
+let currentFile = null;
+let attachments = [];
+let settings = JSON.parse(localStorage.getItem('settings')||'{"model":"claude","temp":0.7,"autoRun":true}');
+let projects = JSON.parse(localStorage.getItem('projects')||'{}');
+let currentProject = localStorage.getItem('currentProject')||'default';
 
-class NebulaApp {
-  constructor() {
-    this.currentProject = null;
-    this.currentFile = null;
-    this.messages = [];
-    this.isStreaming = false;
-    this.previewContent = '';
-    
-    this.init();
-  }
+// Initialize
+document.addEventListener('DOMContentLoaded', init);
 
-  init() {
-    this.cacheElements();
-    this.bindEvents();
-    this.loadProjects();
-    this.autoResize();
-  }
-
-  cacheElements() {
-    // Panels
-    this.leftPanel = document.getElementById('leftPanel');
-    this.rightPanel = document.getElementById('rightPanel');
-    this.leftToggle = document.getElementById('leftToggle');
-    this.rightToggle = document.getElementById('rightToggle');
-    
-    // Chat
-    this.messagesContainer = document.getElementById('messagesContainer');
-    this.messageInput = document.getElementById('messageInput');
-    this.sendBtn = document.getElementById('sendBtn');
-    this.modelSelect = document.getElementById('modelSelect');
-    
-    // Files
-    this.projectSelect = document.getElementById('projectSelect');
-    this.fileTree = document.getElementById('fileTree');
-    
-    // Preview
-    this.previewFrame = document.getElementById('previewFrame');
-    this.previewEmpty = document.getElementById('previewEmpty');
-    this.previewContainer = document.getElementById('previewContainer');
-    
-    // Modals
-    this.codeModal = document.getElementById('codeModal');
-    this.projectModal = document.getElementById('projectModal');
-  }
-
-  bindEvents() {
-    // Panel toggles
-    this.leftToggle.addEventListener('click', () => this.togglePanel('left'));
-    this.rightToggle.addEventListener('click', () => this.togglePanel('right'));
-    document.getElementById('leftClose').addEventListener('click', () => this.togglePanel('left'));
-    document.getElementById('rightClose').addEventListener('click', () => this.togglePanel('right'));
-
-    // Chat
-    this.sendBtn.addEventListener('click', () => this.sendMessage());
-    this.messageInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        this.sendMessage();
-      }
-    });
-    this.messageInput.addEventListener('input', () => this.autoResize());
-
-    // Quick actions
-    document.querySelectorAll('.quick-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        this.messageInput.value = btn.dataset.prompt;
-        this.messageInput.focus();
-      });
-    });
-
-    // Projects
-    document.getElementById('newProjectBtn').addEventListener('click', () => {
-      this.projectModal.classList.add('open');
-    });
-    document.getElementById('projectModalClose').addEventListener('click', () => {
-      this.projectModal.classList.remove('open');
-    });
-    document.getElementById('createProjectBtn').addEventListener('click', () => this.createProject());
-    this.projectSelect.addEventListener('change', () => this.loadProjectFiles());
-
-    // Files
-    document.getElementById('newFileBtn').addEventListener('click', () => this.createFile());
-    document.getElementById('newFolderBtn').addEventListener('click', () => this.createFolder());
-
-    // Preview
-    document.getElementById('refreshPreview').addEventListener('click', () => this.refreshPreview());
-    document.getElementById('openExternal').addEventListener('click', () => this.openPreviewExternal());
-    document.querySelectorAll('.device-btn').forEach(btn => {
-      btn.addEventListener('click', () => this.setPreviewDevice(btn));
-    });
-
-    // Code modal
-    document.getElementById('codeModalClose').addEventListener('click', () => {
-      this.codeModal.classList.remove('open');
-    });
-    document.getElementById('copyCodeBtn').addEventListener('click', () => this.copyCode());
-    document.getElementById('previewCodeBtn').addEventListener('click', () => this.previewModalCode());
-
-    // Close modals on backdrop click
-    [this.codeModal, this.projectModal].forEach(modal => {
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) modal.classList.remove('open');
-      });
-    });
-
-    // Keyboard shortcuts
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        this.codeModal.classList.remove('open');
-        this.projectModal.classList.remove('open');
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
-        e.preventDefault();
-        this.togglePanel('left');
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
-        e.preventDefault();
-        this.togglePanel('right');
-      }
-    });
-  }
-
-  // ============================================
-  // PANEL MANAGEMENT
-  // ============================================
-
-  togglePanel(side) {
-    const panel = side === 'left' ? this.leftPanel : this.rightPanel;
-    const toggle = side === 'left' ? this.leftToggle : this.rightToggle;
-    
-    panel.classList.toggle('open');
-    toggle.classList.toggle('hidden', panel.classList.contains('open'));
-  }
-
-  // ============================================
-  // CHAT FUNCTIONALITY
-  // ============================================
-
-  autoResize() {
-    this.messageInput.style.height = 'auto';
-    this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 150) + 'px';
-  }
-
-  async sendMessage() {
-    const message = this.messageInput.value.trim();
-    if (!message || this.isStreaming) return;
-
-    // Clear input
-    this.messageInput.value = '';
-    this.autoResize();
-
-    // Hide welcome message
-    const welcome = this.messagesContainer.querySelector('.welcome-message');
-    if (welcome) welcome.remove();
-
-    // Add user message
-    this.addMessage('user', message);
-
-    // Add AI typing indicator
-    const typingId = this.addTypingIndicator();
-
-    // Get selected model
-    const model = this.modelSelect.value;
-
-    try {
-      this.isStreaming = true;
-      this.sendBtn.disabled = true;
-
-      const response = await fetch(`${window.NEBULA_CONFIG.API_URL}/api/ai/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.getToken()}`
-        },
-        body: JSON.stringify({
-          message,
-          model: model === 'auto' ? null : model,
-          projectId: this.currentProject?.id
-        })
-      });
-
-      // Remove typing indicator
-      this.removeTypingIndicator(typingId);
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Failed to get response');
-      }
-
-      const data = await response.json();
-      this.addMessage('assistant', data.response);
-
-      // Check for code in response and update preview
-      this.extractAndPreviewCode(data.response);
-
-    } catch (error) {
-      this.removeTypingIndicator(typingId);
-      this.addMessage('assistant', `❌ Error: ${error.message}`);
-    } finally {
-      this.isStreaming = false;
-      this.sendBtn.disabled = false;
-    }
-  }
-
-  addMessage(role, content) {
-    const messageEl = document.createElement('div');
-    messageEl.className = `message ${role}`;
-    
-    const avatar = role === 'user' ? '👤' : '✨';
-    const formattedContent = this.formatMessage(content);
-    
-    messageEl.innerHTML = `
-      <div class="message-avatar">${avatar}</div>
-      <div class="message-content">${formattedContent}</div>
-    `;
-    
-    this.messagesContainer.appendChild(messageEl);
-    this.scrollToBottom();
-    
-    // Add click handlers for code blocks
-    messageEl.querySelectorAll('.code-action-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const action = e.target.dataset.action;
-        const code = e.target.closest('pre').querySelector('code').textContent;
-        const lang = e.target.dataset.lang || '';
-        
-        if (action === 'copy') {
-          navigator.clipboard.writeText(code);
-          e.target.textContent = '✓ Copied';
-          setTimeout(() => e.target.textContent = 'Copy', 2000);
-        } else if (action === 'preview') {
-          this.updatePreview(code, lang);
-          this.togglePanel('right');
-          if (!this.rightPanel.classList.contains('open')) {
-            this.togglePanel('right');
-          }
-        } else if (action === 'expand') {
-          this.showCodeModal(code, lang);
-        }
-      });
-    });
-    
-    this.messages.push({ role, content });
-  }
-
-  formatMessage(content) {
-    // Escape HTML
-    let formatted = content
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-    
-    // Format code blocks
-    formatted = formatted.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
-      const language = lang || 'code';
-      const isPreviewable = ['html', 'css', 'javascript', 'js'].includes(lang.toLowerCase());
-      return `
-        <pre data-lang="${language}">
-          <div class="code-actions">
-            <button class="code-action-btn" data-action="copy" data-lang="${lang}">Copy</button>
-            ${isPreviewable ? `<button class="code-action-btn" data-action="preview" data-lang="${lang}">Preview</button>` : ''}
-            <button class="code-action-btn" data-action="expand" data-lang="${lang}">Expand</button>
-          </div>
-          <code>${code.trim()}</code>
-        </pre>
-      `;
-    });
-    
-    // Format inline code
-    formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
-    
-    // Format bold
-    formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    
-    // Format italic
-    formatted = formatted.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    
-    // Format line breaks
-    formatted = formatted.replace(/\n/g, '<br>');
-    
-    return formatted;
-  }
-
-  addTypingIndicator() {
-    const id = 'typing-' + Date.now();
-    const typingEl = document.createElement('div');
-    typingEl.className = 'message assistant';
-    typingEl.id = id;
-    typingEl.innerHTML = `
-      <div class="message-avatar">✨</div>
-      <div class="message-content">
-        <div class="typing-indicator">
-          <span></span><span></span><span></span>
-        </div>
-      </div>
-    `;
-    this.messagesContainer.appendChild(typingEl);
-    this.scrollToBottom();
-    return id;
-  }
-
-  removeTypingIndicator(id) {
-    const el = document.getElementById(id);
-    if (el) el.remove();
-  }
-
-  scrollToBottom() {
-    this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-  }
-
-  // ============================================
-  // PREVIEW FUNCTIONALITY
-  // ============================================
-
-  extractAndPreviewCode(response) {
-    // Find HTML, CSS, or JS code blocks
-    const htmlMatch = response.match(/```html\n?([\s\S]*?)```/i);
-    const cssMatch = response.match(/```css\n?([\s\S]*?)```/i);
-    const jsMatch = response.match(/```(?:javascript|js)\n?([\s\S]*?)```/i);
-    
-    if (htmlMatch || cssMatch || jsMatch) {
-      let html = htmlMatch ? htmlMatch[1] : '';
-      const css = cssMatch ? `<style>${cssMatch[1]}</style>` : '';
-      const js = jsMatch ? `<script>${jsMatch[1]}</script>` : '';
-      
-      // If no HTML but has CSS/JS, create wrapper
-      if (!html && (css || js)) {
-        html = '<div id="app"></div>';
-      }
-      
-      // Check if HTML is a full document
-      if (!html.includes('<!DOCTYPE') && !html.includes('<html')) {
-        html = `
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            ${css}
-          </head>
-          <body>
-            ${html}
-            ${js}
-          </body>
-          </html>
-        `;
-      } else {
-        // Insert CSS and JS into existing document
-        if (css) html = html.replace('</head>', `${css}</head>`);
-        if (js) html = html.replace('</body>', `${js}</body>`);
-      }
-      
-      this.updatePreview(html, 'html');
-    }
-  }
-
-  updatePreview(code, lang) {
-    this.previewContent = code;
-    
-    if (lang === 'html' || code.includes('<!DOCTYPE') || code.includes('<html')) {
-      this.previewFrame.srcdoc = code;
-    } else if (lang === 'css') {
-      this.previewFrame.srcdoc = `
-        <!DOCTYPE html>
-        <html>
-        <head><style>${code}</style></head>
-        <body><div class="preview-demo">CSS Preview</div></body>
-        </html>
-      `;
-    } else if (lang === 'javascript' || lang === 'js') {
-      this.previewFrame.srcdoc = `
-        <!DOCTYPE html>
-        <html>
-        <head></head>
-        <body>
-          <div id="output"></div>
-          <script>
-            const output = document.getElementById('output');
-            const log = console.log;
-            console.log = (...args) => {
-              output.innerHTML += args.join(' ') + '<br>';
-              log(...args);
-            };
-            ${code}
-          </script>
-        </body>
-        </html>
-      `;
-    }
-    
-    this.previewEmpty.classList.add('hidden');
-    
-    // Open preview panel if not open
-    if (!this.rightPanel.classList.contains('open')) {
-      this.togglePanel('right');
-    }
-  }
-
-  refreshPreview() {
-    if (this.previewContent) {
-      this.previewFrame.srcdoc = this.previewContent;
-    }
-  }
-
-  openPreviewExternal() {
-    if (this.previewContent) {
-      const blob = new Blob([this.previewContent], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank');
-    }
-  }
-
-  setPreviewDevice(btn) {
-    document.querySelectorAll('.device-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    this.previewContainer.style.maxWidth = btn.dataset.width;
-    this.previewContainer.style.margin = btn.dataset.width === '100%' ? '16px' : '16px auto';
-  }
-
-  // ============================================
-  // CODE MODAL
-  // ============================================
-
-  showCodeModal(code, lang) {
-    document.getElementById('codeModalTitle').textContent = lang || 'Code';
-    document.getElementById('codeContent').querySelector('code').textContent = code;
-    this.codeModal.dataset.code = code;
-    this.codeModal.dataset.lang = lang;
-    this.codeModal.classList.add('open');
-  }
-
-  copyCode() {
-    const code = this.codeModal.dataset.code;
-    navigator.clipboard.writeText(code);
-    document.getElementById('copyCodeBtn').textContent = '✓ Copied!';
-    setTimeout(() => {
-      document.getElementById('copyCodeBtn').textContent = '📋 Copy';
-    }, 2000);
-  }
-
-  previewModalCode() {
-    const code = this.codeModal.dataset.code;
-    const lang = this.codeModal.dataset.lang;
-    this.updatePreview(code, lang);
-    this.codeModal.classList.remove('open');
-  }
-
-  // ============================================
-  // PROJECT & FILE MANAGEMENT
-  // ============================================
-
-  async loadProjects() {
-    try {
-      const response = await fetch(`${window.NEBULA_CONFIG.API_URL}/api/projects`, {
-        headers: { 'Authorization': `Bearer ${this.getToken()}` }
-      });
-      
-      if (response.ok) {
-        const projects = await response.json();
-        this.projectSelect.innerHTML = '<option value="">Select Project...</option>';
-        projects.forEach(project => {
-          const option = document.createElement('option');
-          option.value = project.id;
-          option.textContent = project.name;
-          this.projectSelect.appendChild(option);
-        });
-      }
-    } catch (error) {
-      console.error('Failed to load projects:', error);
-    }
-  }
-
-  async createProject() {
-    const name = document.getElementById('projectNameInput').value.trim();
-    if (!name) return;
-    
-    try {
-      const response = await fetch(`${window.NEBULA_CONFIG.API_URL}/api/projects`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.getToken()}`
-        },
-        body: JSON.stringify({ name })
-      });
-      
-      if (response.ok) {
-        const project = await response.json();
-        this.projectModal.classList.remove('open');
-        document.getElementById('projectNameInput').value = '';
-        await this.loadProjects();
-        this.projectSelect.value = project.id;
-        this.loadProjectFiles();
-      }
-    } catch (error) {
-      console.error('Failed to create project:', error);
-    }
-  }
-
-  async loadProjectFiles() {
-    const projectId = this.projectSelect.value;
-    if (!projectId) {
-      this.fileTree.innerHTML = '<div class="empty-state">No project selected</div>';
-      this.currentProject = null;
-      return;
-    }
-    
-    try {
-      const response = await fetch(`${window.NEBULA_CONFIG.API_URL}/api/projects/${projectId}/files`, {
-        headers: { 'Authorization': `Bearer ${this.getToken()}` }
-      });
-      
-      if (response.ok) {
-        const files = await response.json();
-        this.currentProject = { id: projectId };
-        this.renderFileTree(files);
-      }
-    } catch (error) {
-      console.error('Failed to load files:', error);
-    }
-  }
-
-  renderFileTree(files) {
-    if (!files || files.length === 0) {
-      this.fileTree.innerHTML = '<div class="empty-state">No files yet</div>';
-      return;
-    }
-    
-    this.fileTree.innerHTML = files.map(file => `
-      <div class="file-item" data-id="${file.id}" data-path="${file.path}">
-        <span class="icon">${file.type === 'folder' ? '📁' : this.getFileIcon(file.name)}</span>
-        <span class="name">${file.name}</span>
-      </div>
-    `).join('');
-    
-    this.fileTree.querySelectorAll('.file-item').forEach(item => {
-      item.addEventListener('click', () => this.openFile(item.dataset.id));
-    });
-  }
-
-  getFileIcon(filename) {
-    const ext = filename.split('.').pop().toLowerCase();
-    const icons = {
-      js: '📜', ts: '📘', jsx: '⚛️', tsx: '⚛️',
-      html: '🌐', css: '🎨', scss: '🎨',
-      json: '📋', md: '📝', txt: '📄',
-      py: '🐍', rb: '💎', go: '🔷',
-      jpg: '🖼️', png: '🖼️', svg: '🎭',
-      default: '📄'
-    };
-    return icons[ext] || icons.default;
-  }
-
-  async openFile(fileId) {
-    try {
-      const response = await fetch(`${window.NEBULA_CONFIG.API_URL}/api/files/${fileId}`, {
-        headers: { 'Authorization': `Bearer ${this.getToken()}` }
-      });
-      
-      if (response.ok) {
-        const file = await response.json();
-        this.currentFile = file;
-        
-        // Highlight in tree
-        this.fileTree.querySelectorAll('.file-item').forEach(item => {
-          item.classList.toggle('active', item.dataset.id === fileId);
-        });
-        
-        // If it's previewable, show in preview
-        const ext = file.name.split('.').pop().toLowerCase();
-        if (['html', 'htm'].includes(ext)) {
-          this.updatePreview(file.content, 'html');
-        }
-      }
-    } catch (error) {
-      console.error('Failed to open file:', error);
-    }
-  }
-
-  createFile() {
-    const name = prompt('File name:');
-    if (name && this.currentProject) {
-      this.saveFile(name, '');
-    }
-  }
-
-  createFolder() {
-    const name = prompt('Folder name:');
-    if (name && this.currentProject) {
-      // TODO: Implement folder creation
-      console.log('Create folder:', name);
-    }
-  }
-
-  async saveFile(name, content) {
-    try {
-      const response = await fetch(`${window.NEBULA_CONFIG.API_URL}/api/projects/${this.currentProject.id}/files`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.getToken()}`
-        },
-        body: JSON.stringify({ name, content, path: '/' + name })
-      });
-      
-      if (response.ok) {
-        this.loadProjectFiles();
-      }
-    } catch (error) {
-      console.error('Failed to save file:', error);
-    }
-  }
-
-  // ============================================
-  // AUTH
-  // ============================================
-
-  getToken() {
-    return localStorage.getItem('nebula_token') || 'guest';
+function init() {
+  loadSettings();
+  loadProjects();
+  loadFiles();
+  setupInput();
+  showWelcome();
+  // Auto-show panels on desktop
+  if(window.innerWidth > 900) {
+    document.getElementById('preview').classList.remove('hide');
   }
 }
 
-// Initialize app
-document.addEventListener('DOMContentLoaded', () => {
-  window.app = new NebulaApp();
+// Panel toggle
+function toggle(id) {
+  document.getElementById(id==='files'?'files':'preview').classList.toggle('hide');
+}
+
+// Modal
+function modal(id) {
+  document.getElementById(id).classList.toggle('show');
+}
+
+// Settings
+function loadSettings() {
+  document.getElementById('model').value = settings.model;
+  document.getElementById('temp').value = settings.temp;
+  document.getElementById('autoRun').checked = settings.autoRun;
+}
+
+function saveSettings() {
+  settings = {
+    model: document.getElementById('model').value,
+    temp: parseFloat(document.getElementById('temp').value),
+    autoRun: document.getElementById('autoRun').checked
+  };
+  localStorage.setItem('settings', JSON.stringify(settings));
+  modal('settings');
+}
+
+// Projects
+function loadProjects() {
+  const sel = document.getElementById('projectSelect');
+  sel.innerHTML = '<option value="new">+ New Project</option>';
+  Object.keys(projects).forEach(p => {
+    sel.innerHTML += `<option value="${p}" ${p===currentProject?'selected':''}>${p}</option>`;
+  });
+}
+
+function loadProject(name) {
+  if(name === 'new') {
+    const n = prompt('Project name:');
+    if(n) {
+      currentProject = n;
+      projects[n] = {};
+      files = {};
+      localStorage.setItem('projects', JSON.stringify(projects));
+      localStorage.setItem('currentProject', n);
+      loadProjects();
+      loadFiles();
+    }
+    return;
+  }
+  currentProject = name;
+  files = projects[name] || {};
+  localStorage.setItem('currentProject', name);
+  renderTree();
+  runPreview();
+}
+
+function saveProject() {
+  projects[currentProject] = files;
+  localStorage.setItem('projects', JSON.stringify(projects));
+}
+
+// Files
+function loadFiles() {
+  files = projects[currentProject] || {};
+  renderTree();
+}
+
+function renderTree() {
+  const tree = document.getElementById('tree');
+  tree.innerHTML = '';
+  const sorted = Object.keys(files).sort();
+  sorted.forEach(name => {
+    const div = document.createElement('div');
+    div.className = 'file' + (name === currentFile ? ' active' : '');
+    div.innerHTML = `<span>${getIcon(name)}</span><span>${name}</span>`;
+    div.onclick = () => openFile(name);
+    div.oncontextmenu = (e) => { e.preventDefault(); deleteFile(name); };
+    tree.appendChild(div);
+  });
+}
+
+function getIcon(name) {
+  if(name.endsWith('.html')) return '🌐';
+  if(name.endsWith('.css')) return '🎨';
+  if(name.endsWith('.js')) return '⚡';
+  if(name.endsWith('.json')) return '📋';
+  if(name.endsWith('.md')) return '📝';
+  return '📄';
+}
+
+function newFile() {
+  const name = prompt('File name (e.g., index.html):');
+  if(name) {
+    files[name] = '';
+    saveProject();
+    renderTree();
+    openFile(name);
+  }
+}
+
+function newFolder() {
+  alert('Create files with paths like: folder/file.html');
+}
+
+function openFile(name) {
+  currentFile = name;
+  document.getElementById('editName').textContent = name;
+  document.getElementById('code').value = files[name];
+  renderTree();
+  modal('editor');
+}
+
+function saveFile() {
+  if(currentFile) {
+    files[currentFile] = document.getElementById('code').value;
+    saveProject();
+    modal('editor');
+    if(settings.autoRun) runPreview();
+  }
+}
+
+function deleteFile(name) {
+  if(confirm(`Delete ${name}?`)) {
+    delete files[name];
+    saveProject();
+    renderTree();
+    runPreview();
+  }
+}
+
+// Input handling
+function setupInput() {
+  const input = document.getElementById('input');
+  input.addEventListener('keydown', e => {
+    if(e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  });
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+  });
+}
+
+// Attachments
+function attach(fileList) {
+  Array.from(fileList).forEach(f => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      attachments.push({ name: f.name, data: e.target.result });
+      renderAttachments();
+    };
+    reader.readAsDataURL(f);
+  });
+}
+
+function renderAttachments() {
+  const list = document.getElementById('attachList');
+  list.innerHTML = attachments.map((a, i) => 
+    `<div class="att">${a.name}<button onclick="removeAttach(${i})">×</button></div>`
+  ).join('');
+}
+
+function removeAttach(i) {
+  attachments.splice(i, 1);
+  renderAttachments();
+}
+
+// Messages
+function showWelcome() {
+  const msgs = document.getElementById('msgs');
+  msgs.innerHTML = `
+    <div class="welcome">
+      <h2>What do you want to build?</h2>
+      <p>Describe your project and I'll code it for you.</p>
+      <div class="prompts">
+        <button onclick="setPrompt('Build a modern landing page with hero, features, and contact form')">Landing Page</button>
+        <button onclick="setPrompt('Create a todo app with add, edit, delete, and localStorage')">Todo App</button>
+        <button onclick="setPrompt('Build a calculator with all basic operations')">Calculator</button>
+        <button onclick="setPrompt('Create a weather app that fetches real data')">Weather App</button>
+      </div>
+    </div>
+  `;
+}
+
+function setPrompt(text) {
+  document.getElementById('input').value = text;
+  document.getElementById('input').focus();
+}
+
+function addMessage(role, content) {
+  const msgs = document.getElementById('msgs');
+  if(msgs.querySelector('.welcome')) msgs.innerHTML = '';
+  
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  
+  if(role === 'ai') {
+    div.innerHTML = parseContent(content);
+    div.querySelectorAll('pre').forEach(pre => {
+      const code = pre.querySelector('code');
+      if(code) {
+        const lang = code.className.replace('language-', '');
+        pre.innerHTML = `<span class="lang">${lang}</span><button class="copy" onclick="copyCode(this)">Copy</button>` + pre.innerHTML;
+      }
+    });
+  } else {
+    div.textContent = content;
+  }
+  
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+function parseContent(text) {
+  // Parse code blocks
+  text = text.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
+    return `<pre><code class="language-${lang||'text'}">${escapeHtml(code.trim())}</code></pre>`;
+  });
+  // Parse inline code
+  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Parse bold
+  text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // Parse links
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  // Parse newlines
+  text = text.replace(/\n/g, '<br>');
+  return text;
+}
+
+function escapeHtml(text) {
+  return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function copyCode(btn) {
+  const code = btn.parentElement.querySelector('code').textContent;
+  navigator.clipboard.writeText(code);
+  btn.textContent = 'Copied!';
+  setTimeout(() => btn.textContent = 'Copy', 1500);
+}
+
+// Send message
+async function send() {
+  const input = document.getElementById('input');
+  const text = input.value.trim();
+  if(!text) return;
+  
+  input.value = '';
+  input.style.height = 'auto';
+  addMessage('user', text);
+  
+  const typing = addMessage('ai', 'Thinking...');
+  typing.classList.add('typing');
+  
+  try {
+    const res = await fetch(`${API}/api/ai/chat`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({
+        message: text,
+        model: settings.model,
+        temperature: settings.temp,
+        files: Object.keys(files).length ? files : undefined,
+        attachments: attachments.length ? attachments : undefined
+      })
+    });
+    
+    const data = await res.json();
+    typing.remove();
+    
+    if(data.error) {
+      addMessage('ai', `Error: ${data.error}`);
+      return;
+    }
+    
+    addMessage('ai', data.response || data.message);
+    
+    // Extract and save files from response
+    extractFiles(data.response || data.message);
+    
+    // Clear attachments
+    attachments = [];
+    renderAttachments();
+    
+  } catch(err) {
+    typing.remove();
+    addMessage('ai', `Connection error: ${err.message}`);
+  }
+}
+
+// Extract code files from AI response
+function extractFiles(response) {
+  const codeBlocks = response.matchAll(/```(\w+)\n([\s\S]*?)```/g);
+  let hasHtml = false, hasCss = false, hasJs = false;
+  
+  for(const match of codeBlocks) {
+    const lang = match[1].toLowerCase();
+    const code = match[2].trim();
+    
+    if(lang === 'html' && !hasHtml) {
+      files['index.html'] = code;
+      hasHtml = true;
+    } else if(lang === 'css' && !hasCss) {
+      files['style.css'] = code;
+      hasCss = true;
+    } else if((lang === 'javascript' || lang === 'js') && !hasJs) {
+      files['script.js'] = code;
+      hasJs = true;
+    }
+  }
+  
+  if(hasHtml || hasCss || hasJs) {
+    saveProject();
+    renderTree();
+    if(settings.autoRun) runPreview();
+  }
+}
+
+// Preview
+function runPreview() {
+  const html = files['index.html'] || '';
+  const css = files['style.css'] || '';
+  const js = files['script.js'] || '';
+  
+  let content = html;
+  
+  // Inject CSS if not linked
+  if(css && !html.includes('style.css')) {
+    content = content.replace('</head>', `<style>${css}</style></head>`);
+  }
+  
+  // Inject JS if not linked
+  if(js && !html.includes('script.js')) {
+    content = content.replace('</body>', `<script>${js}<\/script></body>`);
+  }
+  
+  // Console capture
+  const consoleCapture = `<script>
+    const log=console.log,err=console.error;
+    console.log=(...a)=>{log(...a);parent.postMessage({type:'log',data:a.join(' ')},'*')};
+    console.error=(...a)=>{err(...a);parent.postMessage({type:'error',data:a.join(' ')},'*')};
+    window.onerror=(m)=>parent.postMessage({type:'error',data:m},'*');
+  <\/script>`;
+  
+  content = content.replace('<head>', '<head>' + consoleCapture);
+  
+  const frame = document.getElementById('frame');
+  frame.srcdoc = content;
+  
+  // Show preview panel
+  document.getElementById('preview').classList.remove('hide');
+}
+
+// Preview tabs
+function showTab(tab) {
+  document.querySelectorAll('.preview-tabs button').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  
+  document.getElementById('frame').style.display = tab === 'frame' ? 'block' : 'none';
+  document.getElementById('codeView').style.display = ['html','css','js'].includes(tab) ? 'block' : 'none';
+  document.getElementById('log').style.display = tab === 'log' ? 'block' : 'none';
+  
+  if(tab === 'html') document.getElementById('codeView').textContent = files['index.html'] || '';
+  if(tab === 'css') document.getElementById('codeView').textContent = files['style.css'] || '';
+  if(tab === 'js') document.getElementById('codeView').textContent = files['script.js'] || '';
+}
+
+// Console log capture
+window.addEventListener('message', e => {
+  if(e.data.type === 'log' || e.data.type === 'error') {
+    const log = document.getElementById('log');
+    const color = e.data.type === 'error' ? '#f66' : '#0f0';
+    log.innerHTML += `<div style="color:${color}">${escapeHtml(e.data.data)}</div>`;
+  }
+});
+
+// Expand preview
+function expand() {
+  document.getElementById('preview').classList.toggle('expanded');
+}
+
+// Fullscreen preview
+function toggleFullscreen() {
+  const html = files['index.html'] || '';
+  const css = files['style.css'] || '';
+  const js = files['script.js'] || '';
+  
+  let content = html;
+  if(css && !html.includes('style.css')) content = content.replace('</head>', `<style>${css}</style></head>`);
+  if(js && !html.includes('script.js')) content = content.replace('</body>', `<script>${js}<\/script></body>`);
+  
+  document.getElementById('fullFrame').srcdoc = content;
+  modal('full');
+}
+
+// Alias for expand button
+window.expand = function() {
+  document.getElementById('preview').classList.toggle('expanded');
+};
+
+// Export
+async function exportAll() {
+  const zip = new JSZip();
+  Object.entries(files).forEach(([name, content]) => {
+    zip.file(name, content);
+  });
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${currentProject}.zip`;
+  a.click();
+}
+
+// Import ZIP
+async function importZip(file) {
+  const zip = await JSZip.loadAsync(file);
+  for(const [name, entry] of Object.entries(zip.files)) {
+    if(!entry.dir) {
+      files[name] = await entry.async('string');
+    }
+  }
+  saveProject();
+  renderTree();
+  runPreview();
+  modal('import');
+}
+
+// Import files
+function importFiles(fileList) {
+  Array.from(fileList).forEach(f => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      files[f.name] = e.target.result;
+      saveProject();
+      renderTree();
+      if(settings.autoRun) runPreview();
+    };
+    reader.readAsText(f);
+  });
+  modal('import');
+}
+
+// Import GitHub
+async function importGH() {
+  const url = document.getElementById('ghUrl').value.trim();
+  if(!url) return;
+  
+  try {
+    // Parse GitHub URL
+    const match = url.match(/github\.com\/([^\/]+)\/([^\/]+)/);
+    if(!match) throw new Error('Invalid GitHub URL');
+    
+    const [_, owner, repo] = match;
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents`;
+    
+    const res = await fetch(apiUrl);
+    const items = await res.json();
+    
+    for(const item of items) {
+      if(item.type === 'file' && /\.(html|css|js|json|md)$/.test(item.name)) {
+        const fileRes = await fetch(item.download_url);
+        files[item.name] = await fileRes.text();
+      }
+    }
+    
+    saveProject();
+    renderTree();
+    runPreview();
+    modal('import');
+  } catch(err) {
+    alert('Import failed: ' + err.message);
+  }
+}
+
+// Deploy
+async function doDeploy() {
+  const platform = document.getElementById('platform').value;
+  const name = document.getElementById('deployName').value.trim() || currentProject;
+  const out = document.getElementById('deployOut');
+  
+  out.innerHTML = 'Deploying...';
+  
+  try {
+    const res = await fetch(`${API}/api/deploy`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({ platform, name, files })
+    });
+    
+    const data = await res.json();
+    
+    if(data.error) {
+      out.innerHTML = `<span style="color:#f66">Error: ${data.error}</span>`;
+    } else if(data.url) {
+      out.innerHTML = `✅ Deployed! <a href="${data.url}" target="_blank">${data.url}</a>`;
+    } else {
+      out.innerHTML = `✅ ${data.message || 'Deploy initiated'}`;
+    }
+  } catch(err) {
+    out.innerHTML = `<span style="color:#f66">Error: ${err.message}</span>`;
+  }
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if((e.ctrlKey || e.metaKey) && e.key === 'b') {
+    e.preventDefault();
+    toggle('files');
+  }
+  if((e.ctrlKey || e.metaKey) && e.key === 'p') {
+    e.preventDefault();
+    toggle('preview');
+  }
+  if((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault();
+    if(document.getElementById('editor').classList.contains('show')) {
+      saveFile();
+    }
+  }
 });
