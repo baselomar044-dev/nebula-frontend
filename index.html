@@ -3,204 +3,182 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#0a0a0f">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>AI - Code Assistant</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+  <title>AI</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <!-- Mobile Header -->
   <header class="mobile-header">
-    <button class="mobile-btn" id="mobileFilesBtn" title="Files">☰</button>
+    <button class="mobile-btn" onclick="toggleFiles()">☰</button>
     <span class="logo">AI</span>
     <div class="mobile-actions">
-      <button class="mobile-btn" id="mobileSettingsBtn" title="Settings">⚙</button>
-      <button class="mobile-btn" id="mobilePreviewBtn" title="Preview">◧</button>
+      <button class="mobile-btn" onclick="openSettings()">⚙</button>
+      <button class="mobile-btn" onclick="togglePreview()">◧</button>
     </div>
   </header>
 
-  <!-- Panel Overlay (for mobile) -->
-  <div class="panel-overlay" id="panelOverlay"></div>
+  <!-- Desktop Header -->
+  <header class="desktop-header">
+    <div class="header-left">
+      <button class="header-btn" onclick="toggleFiles()" title="Files">☰</button>
+      <span class="logo">AI</span>
+    </div>
+    <div class="header-center">
+      <select id="providerSelect" onchange="updateModelOptions()">
+        <option value="anthropic">Claude</option>
+        <option value="openai">OpenAI</option>
+        <option value="groq" selected>Groq</option>
+        <option value="gemini">Gemini</option>
+      </select>
+      <select id="modelSelect"></select>
+      <label class="auto-label"><input type="checkbox" id="autoModel" checked> Auto</label>
+    </div>
+    <div class="header-right">
+      <button class="header-btn" onclick="importProject()" title="Import">↓</button>
+      <button class="header-btn" onclick="exportProject()" title="Export">↑</button>
+      <button class="header-btn" onclick="deployProject()" title="Deploy">⚡</button>
+      <button class="header-btn" onclick="openSettings()" title="Settings">⚙</button>
+      <button class="header-btn" onclick="togglePreview()" title="Preview">◧</button>
+    </div>
+  </header>
 
-  <div class="app">
+  <!-- Overlay for mobile -->
+  <div id="overlay" onclick="closeAllPanels()"></div>
+
+  <!-- Main Container -->
+  <div class="main-container">
     <!-- Files Panel -->
-    <aside class="files-panel" id="filesPanel">
+    <aside id="filesPanel" class="panel files-panel">
       <div class="panel-header">
-        <h3>📁 Files</h3>
-        <button class="panel-close" id="closeFilesBtn">✕</button>
+        <span>Files</span>
+        <button class="close-btn" onclick="toggleFiles()">✕</button>
       </div>
-      <div class="file-actions">
-        <button onclick="createFile()">+ New</button>
-        <button onclick="importProject()">↓ Import</button>
-        <button onclick="exportProject()">↑ Export</button>
+      <div class="panel-actions">
+        <button onclick="createFile()">+ New File</button>
+        <button onclick="importFromGit()">⎇ Git Import</button>
       </div>
-      <div class="file-list" id="fileList"></div>
+      <div id="filesList" class="files-list"></div>
     </aside>
 
-    <!-- Main Chat Area -->
-    <main class="main-area">
-      <!-- Desktop Top Bar -->
-      <div class="top-bar">
-        <div class="left">
-          <button class="toggle-btn" onclick="toggleFiles()" title="Files">☰</button>
-          <span class="logo">AI</span>
-        </div>
-        <div class="right">
-          <button onclick="openGitModal()">⎇ Git</button>
-          <button onclick="openDbPanel()">🗄 Database</button>
-          <button onclick="toggleTerminal()">⌨ Terminal</button>
-          <button onclick="openSettings()">⚙ Settings</button>
-          <button class="toggle-btn" onclick="togglePreview()" title="Preview">◧</button>
+    <!-- Chat Area -->
+    <main class="chat-area">
+      <div id="chatMessages" class="chat-messages">
+        <div class="welcome-msg">
+          <h2>👋 Welcome to AI</h2>
+          <p>Build anything. Ask me to create apps, websites, or help with code.</p>
         </div>
       </div>
-
-      <!-- Chat Messages -->
-      <div class="chat-container" id="chatContainer">
-        <div class="message ai">
-          👋 Hi! I'm your AI coding assistant. I can help you build anything - websites, apps, APIs, databases. Just describe what you want!
-        </div>
-      </div>
-
-      <!-- Model Selector -->
-      <div class="model-selector">
-        <select id="providerSelect">
-          <option value="auto">🤖 Auto</option>
-          <option value="anthropic">Claude</option>
-          <option value="openai">OpenAI</option>
-          <option value="groq">Groq</option>
-          <option value="gemini">Gemini</option>
-        </select>
-        <select id="modelSelect">
-          <option value="auto">Auto-select</option>
-        </select>
-        <label class="auto-model">
-          <input type="checkbox" id="autoModel" checked> Smart model selection
-        </label>
-      </div>
-
-      <!-- Input Area -->
-      <div class="input-area">
-        <div class="input-wrapper">
-          <textarea 
-            id="userInput" 
-            placeholder="Describe what you want to build..." 
-            rows="1"
-            onkeydown="handleKeyDown(event)"
-          ></textarea>
-          <div class="input-actions">
-            <button class="attach-btn" onclick="attachFile()" title="Attach file">📎</button>
-            <button class="send-btn" id="sendBtn" onclick="sendMessage()">➤</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Terminal Panel -->
-      <div class="terminal-panel" id="terminalPanel">
-        <div class="terminal-header">
-          <span>Terminal</span>
-          <button onclick="toggleTerminal()" style="background:none;border:none;color:var(--text);cursor:pointer;">✕</button>
-        </div>
-        <div class="terminal-output" id="terminalOutput"></div>
-        <div class="terminal-input">
-          <span>$</span>
-          <input type="text" id="terminalInput" placeholder="Enter command..." onkeydown="handleTerminalKey(event)">
+      <div class="chat-input-area">
+        <div class="input-row">
+          <button class="attach-btn" onclick="attachFile()" title="Attach">📎</button>
+          <textarea id="userInput" placeholder="Ask AI to build something..." rows="1" onkeydown="handleKey(event)"></textarea>
+          <button class="send-btn" onclick="sendMessage()" id="sendBtn">➤</button>
         </div>
       </div>
     </main>
 
     <!-- Preview Panel -->
-    <aside class="preview-panel" id="previewPanel">
-      <div class="auto-fix-banner" id="autoFixBanner">
-        <span>⚠️ Errors detected in preview</span>
-        <button onclick="autoFixErrors()">🔧 Auto-fix</button>
-      </div>
-      <div class="preview-tabs">
-        <button class="active" onclick="switchTab('live')">Live</button>
-        <button onclick="switchTab('html')">HTML</button>
-        <button onclick="switchTab('css')">CSS</button>
-        <button onclick="switchTab('js')">JS</button>
-        <button onclick="switchTab('console')">Console</button>
+    <aside id="previewPanel" class="panel preview-panel">
+      <div class="panel-header">
+        <span>Preview</span>
         <div class="preview-actions">
           <button onclick="toggleExpandPreview()" title="Expand">⛶</button>
-          <button onclick="deployProject()" title="Deploy">⚡</button>
-          <button class="panel-close" id="closePreviewBtn" onclick="togglePreview()">✕</button>
+          <button onclick="refreshPreview()" title="Refresh">↻</button>
+          <button class="close-btn" onclick="togglePreview()">✕</button>
         </div>
       </div>
-      <div class="preview-content" id="previewContent">
+      <div class="preview-tabs">
+        <button class="tab active" onclick="setPreviewTab('live')">Live</button>
+        <button class="tab" onclick="setPreviewTab('html')">HTML</button>
+        <button class="tab" onclick="setPreviewTab('css')">CSS</button>
+        <button class="tab" onclick="setPreviewTab('js')">JS</button>
+        <button class="tab" onclick="setPreviewTab('console')">Console</button>
+      </div>
+      <div id="previewContent" class="preview-content">
         <iframe id="previewFrame" sandbox="allow-scripts allow-modals"></iframe>
+        <pre id="codeView" class="code-view hidden"></pre>
+        <div id="consoleView" class="console-view hidden"></div>
       </div>
     </aside>
   </div>
 
   <!-- Settings Modal -->
-  <div class="settings-modal" id="settingsModal">
-    <div class="settings-header">
-      <h3>⚙ Settings</h3>
-      <button onclick="closeSettings()" style="background:none;border:none;color:var(--text);cursor:pointer;font-size:20px;">✕</button>
-    </div>
-    <div class="settings-content">
-      <label>GitHub Token (for Git features)</label>
-      <input type="password" id="githubToken" placeholder="ghp_...">
-      <label>Netlify Token (for deployments)</label>
-      <input type="password" id="netlifyToken" placeholder="nfp_...">
-      <label>Default Provider</label>
-      <select id="defaultProvider" style="width:100%;padding:12px;margin-bottom:16px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;">
-        <option value="auto">Auto (Smart Selection)</option>
-        <option value="anthropic">Claude</option>
-        <option value="openai">OpenAI</option>
-        <option value="groq">Groq (Fast)</option>
-        <option value="gemini">Gemini</option>
-      </select>
-      <button onclick="saveSettings()">Save Settings</button>
-    </div>
-  </div>
-
-  <!-- Git Modal -->
-  <div class="git-modal" id="gitModal">
-    <div class="git-header">
-      <h3>⎇ Git</h3>
-      <button onclick="closeGitModal()" style="background:none;border:none;color:var(--text);cursor:pointer;font-size:20px;">✕</button>
-    </div>
-    <div class="git-content">
-      <div class="git-tabs">
-        <button class="active" onclick="switchGitTab('import')">Import</button>
-        <button onclick="switchGitTab('push')">Push</button>
+  <div id="settingsModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Settings</h3>
+        <button onclick="closeSettings()">✕</button>
       </div>
-      <div id="gitImportTab">
-        <input type="text" id="gitRepoUrl" placeholder="GitHub repo URL (e.g., owner/repo)">
-        <button class="git-action" onclick="importFromGit()">Import Repository</button>
+      <div class="modal-body">
+        <label>GitHub Token (for Git features):</label>
+        <input type="password" id="githubToken" placeholder="ghp_...">
+        
+        <label>Default Provider:</label>
+        <select id="defaultProvider">
+          <option value="groq">Groq (Fast)</option>
+          <option value="anthropic">Claude (Smart)</option>
+          <option value="openai">OpenAI</option>
+          <option value="gemini">Gemini</option>
+        </select>
+        
+        <label>Theme:</label>
+        <select id="themeSelect">
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
       </div>
-      <div id="gitPushTab" style="display:none;">
-        <input type="text" id="gitPushRepo" placeholder="Repository (e.g., owner/repo)">
-        <input type="text" id="gitCommitMsg" placeholder="Commit message">
-        <button class="git-action" onclick="pushToGit()">Push to GitHub</button>
+      <div class="modal-footer">
+        <button onclick="saveSettings()">Save</button>
+        <button onclick="closeSettings()" class="secondary">Cancel</button>
       </div>
     </div>
   </div>
 
-  <!-- Database Panel -->
-  <div class="db-panel" id="dbPanel">
-    <div class="db-header">
-      <h3>🗄 Database</h3>
-      <button onclick="closeDbPanel()" style="background:none;border:none;color:var(--text);cursor:pointer;font-size:20px;">✕</button>
-    </div>
-    <div class="db-content">
-      <textarea id="sqlQuery" placeholder="Enter SQL query...&#10;Example: CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"></textarea>
-      <button onclick="executeSQL()">▶ Run Query</button>
-      <div class="db-results" id="dbResults"></div>
+  <!-- Import Modal -->
+  <div id="importModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Import Project</h3>
+        <button onclick="closeImportModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <label>Import from:</label>
+        <div class="import-options">
+          <button onclick="importFromFile()">📁 Local Files</button>
+          <button onclick="showGitImport()">⎇ GitHub URL</button>
+          <button onclick="importFromZip()">📦 ZIP File</button>
+        </div>
+        <div id="gitImportSection" class="hidden">
+          <label>GitHub Repository URL:</label>
+          <input type="text" id="gitUrl" placeholder="https://github.com/user/repo">
+          <button onclick="doGitImport()">Import</button>
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- Toast -->
-  <div class="toast" id="toast"></div>
+  <!-- Deploy Modal -->
+  <div id="deployModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Deploy Project</h3>
+        <button onclick="closeDeployModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <label>Deploy to:</label>
+        <div class="deploy-options">
+          <button onclick="deployToNetlify()">▲ Netlify</button>
+          <button onclick="deployToVercel()">▲ Vercel</button>
+          <button onclick="deployToGithub()">⎇ GitHub Pages</button>
+        </div>
+        <div id="deployStatus" class="deploy-status"></div>
+      </div>
+    </div>
+  </div>
 
-  <!-- Hidden file input -->
-  <input type="file" id="fileInput" style="display:none" multiple onchange="handleFileUpload(event)">
-  <input type="file" id="importInput" style="display:none" accept=".zip,.json" onchange="handleImport(event)">
-
+  <input type="file" id="fileInput" multiple hidden onchange="handleFileUpload(event)">
+  <input type="file" id="zipInput" accept=".zip" hidden onchange="handleZipUpload(event)">
+  
   <script src="app.js"></script>
 </body>
 </html>
