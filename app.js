@@ -435,10 +435,10 @@ async function executeSQL() {
   results.innerHTML = 'Running...';
   
   try {
-    const response = await fetch(`${API}/api/database/query`, {
+    const response = await fetch(`${API}/api/db/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query })
+      body: JSON.stringify({ sql: query })
     });
     const data = await response.json();
     
