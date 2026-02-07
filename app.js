@@ -1,4 +1,4 @@
-// AI App - Full Featured Production Ready
+// AI App - Production Ready with Real Error Handling
 const API = 'https://nebula-api-production.up.railway.app';
 
 // State
@@ -7,6 +7,7 @@ let currentFile = null;
 let currentTab = 'live';
 let consoleLogs = [];
 let isStreaming = false;
+let lastError = null;
 
 // Models config
 const MODELS = {
@@ -93,11 +94,9 @@ function getFileIcon(name) {
 function selectFile(name) {
   currentFile = name;
   renderFiles();
-  
-  // Show in code view
   const ext = name.split('.').pop();
-  if (['html', 'css', 'js', 'json', 'md'].includes(ext)) {
-    setPreviewTab(ext === 'html' ? 'html' : ext === 'css' ? 'css' : ext === 'js' ? 'js' : 'html');
+  if (['html', 'css', 'js'].includes(ext)) {
+    setPreviewTab(ext);
   }
 }
 
@@ -115,7 +114,7 @@ function deleteFile(name, e) {
   e.stopPropagation();
   if (confirm(`Delete ${name}?`)) {
     delete files[name];
-    if (currentFile === name) currentFile = Object.keys(files)[0] || null;
+    if (currentFile === name) currentFile = null;
     renderFiles();
     updatePreview();
   }
@@ -123,193 +122,280 @@ function deleteFile(name, e) {
 
 // ==================== PREVIEW ====================
 function updatePreview() {
-  const html = files['index.html'] || '<html><body><p>No index.html</p></body></html>';
+  const preview = document.getElementById('preview');
+  const html = files['index.html'] || '';
   const css = files['style.css'] || '';
   const js = files['app.js'] || '';
   
-  const fullHtml = `
-<!DOCTYPE html>
+  // Build full HTML with error catching
+  const fullHtml = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>${css}</style>
 </head>
 <body>
-${html.replace(/<html.*?>|<\/html>|<head>.*?<\/head>|<body.*?>|<\/body>|<!DOCTYPE.*?>/gis, '')}
+${html.replace(/<html>|<\/html>|<head>[\s\S]*<\/head>|<!DOCTYPE html>/gi, '').replace(/<link[^>]*>/gi, '').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')}
 <script>
-  // Capture console
-  const originalConsole = { log: console.log, error: console.error, warn: console.warn };
-  ['log', 'error', 'warn'].forEach(method => {
-    console[method] = (...args) => {
-      parent.postMessage({ type: 'console', method, args: args.map(a => String(a)) }, '*');
-      originalConsole[method](...args);
-    };
-  });
-  
-  // Capture errors
-  window.onerror = (msg, url, line, col, error) => {
-    parent.postMessage({ type: 'error', message: msg, line, col }, '*');
+// Console capture
+const _log = console.log;
+const _error = console.error;
+const _warn = console.warn;
+console.log = (...args) => { _log(...args); parent.postMessage({type:'console',level:'log',args:args.map(a=>String(a))},'*'); };
+console.error = (...args) => { _error(...args); parent.postMessage({type:'console',level:'error',args:args.map(a=>String(a))},'*'); };
+console.warn = (...args) => { _warn(...args); parent.postMessage({type:'console',level:'warn',args:args.map(a=>String(a))},'*'); };
+
+// Error capture
+window.onerror = function(msg, url, line, col, error) {
+  const errorInfo = {
+    message: msg,
+    line: line,
+    column: col,
+    stack: error ? error.stack : null
   };
+  parent.postMessage({type:'error', error: errorInfo},'*');
+  return false;
+};
+
+// Syntax check and run
+try {
+  ${js}
+} catch(e) {
+  parent.postMessage({type:'error', error: {message: e.message, line: e.lineNumber || 0, stack: e.stack}},'*');
+}
 <\/script>
-<script>${js}<\/script>
 </body>
 </html>`;
 
-  const frame = document.getElementById('previewFrame');
-  frame.srcdoc = fullHtml;
-}
-
-function refreshPreview() {
-  consoleLogs = [];
-  updateConsoleView();
-  updatePreview();
-}
-
-function setPreviewTab(tab) {
-  currentTab = tab;
-  document.querySelectorAll('.preview-tabs .tab').forEach(t => t.classList.remove('active'));
-  document.querySelector(`.preview-tabs .tab:nth-child(${['live','html','css','js','console'].indexOf(tab)+1})`).classList.add('active');
+  preview.srcdoc = fullHtml;
   
-  const frame = document.getElementById('previewFrame');
-  const code = document.getElementById('codeView');
-  const cons = document.getElementById('consoleView');
+  // Update code views
+  document.getElementById('htmlCode').textContent = files['index.html'] || '';
+  document.getElementById('cssCode').textContent = files['style.css'] || '';
+  document.getElementById('jsCode').textContent = files['app.js'] || '';
   
-  frame.classList.add('hidden');
-  code.classList.add('hidden');
-  cons.classList.add('hidden');
-  
-  if (tab === 'live') {
-    frame.classList.remove('hidden');
-  } else if (tab === 'console') {
-    cons.classList.remove('hidden');
-    updateConsoleView();
-  } else {
-    code.classList.remove('hidden');
-    const fileMap = { html: 'index.html', css: 'style.css', js: 'app.js' };
-    code.textContent = files[fileMap[tab]] || `// No ${fileMap[tab]} file`;
-  }
+  // Clear previous errors
+  clearError();
 }
 
-function updateConsoleView() {
-  const cons = document.getElementById('consoleView');
-  cons.innerHTML = consoleLogs.length ? 
-    consoleLogs.map(l => `<div class="console-${l.type}">[${l.type}] ${l.msg}</div>`).join('') :
-    '<div style="color: var(--text2)">Console output will appear here...</div>';
-}
-
-// Listen for console messages from iframe
-window.addEventListener('message', e => {
+// Listen for messages from iframe
+window.addEventListener('message', (e) => {
   if (e.data.type === 'console') {
-    consoleLogs.push({ type: e.data.method, msg: e.data.args.join(' ') });
-    if (currentTab === 'console') updateConsoleView();
+    addConsoleLog(e.data.level, e.data.args.join(' '));
   } else if (e.data.type === 'error') {
-    consoleLogs.push({ type: 'error', msg: `Line ${e.data.line}: ${e.data.message}` });
-    if (currentTab === 'console') updateConsoleView();
-    showErrorBanner(e.data.message);
+    showError(e.data.error);
   }
 });
 
-function showErrorBanner(error) {
-  // Remove existing
-  document.querySelectorAll('.error-banner').forEach(b => b.remove());
-  
-  const banner = document.createElement('div');
-  banner.className = 'error-banner';
-  banner.innerHTML = `
-    <span>⚠️ Error: ${error.substring(0, 50)}...</span>
-    <button onclick="autoFixError('${error.replace(/'/g, "\\'")}')">Auto Fix</button>
-  `;
-  document.querySelector('.preview-content').prepend(banner);
+function addConsoleLog(level, msg) {
+  consoleLogs.push({ level, msg, time: new Date().toLocaleTimeString() });
+  updateConsole();
 }
 
-async function autoFixError(error) {
-  addMessage('user', `Fix this error: ${error}`);
+function updateConsole() {
+  const el = document.getElementById('consoleOutput');
+  el.innerHTML = consoleLogs.map(log => 
+    `<div class="console-${log.level}">[${log.time}] ${log.msg}</div>`
+  ).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function clearConsole() {
+  consoleLogs = [];
+  updateConsole();
+}
+
+function showError(error) {
+  lastError = error;
+  const el = document.getElementById('errorBanner');
+  const msg = error.message || 'Unknown error';
+  const line = error.line ? ` (line ${error.line})` : '';
+  el.innerHTML = `⚠️ Error: ${msg}${line} <button class="auto-fix-btn" onclick="autoFixError()">Auto Fix</button>`;
+  el.style.display = 'flex';
+  addConsoleLog('error', `${msg}${line}`);
+}
+
+function clearError() {
+  lastError = null;
+  document.getElementById('errorBanner').style.display = 'none';
+}
+
+async function autoFixError() {
+  if (!lastError) return;
   
+  const btn = document.querySelector('.auto-fix-btn');
+  btn.textContent = 'Fixing...';
+  btn.disabled = true;
+  
+  // Gather all code context
+  const codeContext = `
+HTML (index.html):
+\`\`\`html
+${files['index.html'] || ''}
+\`\`\`
+
+CSS (style.css):
+\`\`\`css
+${files['style.css'] || ''}
+\`\`\`
+
+JavaScript (app.js):
+\`\`\`javascript
+${files['app.js'] || ''}
+\`\`\`
+
+ERROR: ${lastError.message}
+${lastError.line ? `Line: ${lastError.line}` : ''}
+${lastError.stack ? `Stack: ${lastError.stack}` : ''}
+`;
+
   try {
-    const res = await fetch(`${API}/api/debug/fix`, {
+    const res = await fetch(`${API}/api/ai/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        error: error,
-        code: files['app.js'] || '',
-        language: 'javascript'
+        message: `Fix this JavaScript error. Return ONLY the corrected code files, no explanations. Format your response with code blocks like:
+
+\`\`\`html
+// corrected html
+\`\`\`
+
+\`\`\`css  
+// corrected css
+\`\`\`
+
+\`\`\`javascript
+// corrected js
+\`\`\`
+
+Here's the code and error:
+${codeContext}`,
+        model: 'groq'
       })
     });
     
     const data = await res.json();
-    if (data.fix) {
-      addMessage('ai', `Here's the fix:\n\n\`\`\`javascript\n${data.fix}\n\`\`\`\n\n${data.explanation || ''}`);
-      files['app.js'] = data.fix;
-      updatePreview();
+    if (data.response) {
+      // Extract fixed code
+      const extracted = extractCodeBlocks(data.response);
+      if (extracted.html) files['index.html'] = extracted.html;
+      if (extracted.css) files['style.css'] = extracted.css;
+      if (extracted.js) files['app.js'] = extracted.js;
+      
       renderFiles();
-      document.querySelectorAll('.error-banner').forEach(b => b.remove());
+      updatePreview();
+      addToChat('assistant', '✅ Fixed! Check the preview.');
     }
   } catch (err) {
-    addMessage('ai', 'Could not auto-fix. Please describe the issue.');
+    addToChat('assistant', `❌ Fix failed: ${err.message}`);
   }
+  
+  btn.textContent = 'Auto Fix';
+  btn.disabled = false;
+}
+
+function setPreviewTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`[onclick="setPreviewTab('${tab}')"]`)?.classList.add('active');
+  
+  document.getElementById('livePreview').style.display = tab === 'live' ? 'block' : 'none';
+  document.getElementById('htmlCode').style.display = tab === 'html' ? 'block' : 'none';
+  document.getElementById('cssCode').style.display = tab === 'css' ? 'block' : 'none';
+  document.getElementById('jsCode').style.display = tab === 'js' ? 'block' : 'none';
+  document.getElementById('consoleView').style.display = tab === 'console' ? 'block' : 'none';
+}
+
+function refreshPreview() {
+  updatePreview();
 }
 
 function toggleExpandPreview() {
   document.getElementById('previewPanel').classList.toggle('expanded');
 }
 
-// ==================== CHAT ====================
-function handleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
+// ==================== PANELS ====================
+function toggleFiles() {
+  document.getElementById('filesPanel').classList.toggle('open');
 }
 
+function togglePreview() {
+  document.getElementById('previewPanel').classList.toggle('open');
+}
+
+function toggleSettings() {
+  document.getElementById('settingsModal').classList.toggle('open');
+}
+
+function closeSettings() {
+  document.getElementById('settingsModal').classList.remove('open');
+}
+
+// ==================== CHAT ====================
 async function sendMessage() {
   const input = document.getElementById('userInput');
-  const message = input.value.trim();
-  if (!message || isStreaming) return;
+  const msg = input.value.trim();
+  if (!msg || isStreaming) return;
   
   input.value = '';
   input.style.height = 'auto';
+  addToChat('user', msg);
   
-  // Remove welcome message
-  document.querySelector('.welcome-msg')?.remove();
+  const streamEnabled = document.getElementById('streamToggle')?.checked !== false;
   
-  addMessage('user', message);
-  
-  const aiMsg = addMessage('ai', '<div class="typing-indicator"><span></span><span></span><span></span></div>');
+  if (streamEnabled) {
+    await streamResponse(msg);
+  } else {
+    await regularResponse(msg);
+  }
+}
+
+async function regularResponse(msg) {
+  const provider = document.getElementById('providerSelect').value;
+  const model = document.getElementById('modelSelect').value;
   
   isStreaming = true;
-  document.getElementById('sendBtn').disabled = true;
+  const assistantDiv = addToChat('assistant', '');
+  const contentDiv = assistantDiv.querySelector('.message-content');
+  contentDiv.innerHTML = '<span class="typing">Thinking...</span>';
   
   try {
-    // Determine model
-    const auto = document.getElementById('autoModel').checked;
-    let provider = document.getElementById('providerSelect').value;
-    let model = document.getElementById('modelSelect').value;
-    
-    if (auto) {
-      const selected = selectBestModel(message);
-      provider = selected.provider;
-      model = selected.model;
-    }
-    
-    // Try streaming first
-    const response = await fetch(`${API}/api/ai/stream`, {
+    const res = await fetch(`${API}/api/ai/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: buildPrompt(message),
-        provider,
-        model
-      })
+      body: JSON.stringify({ message: msg, model: provider, specificModel: model })
     });
     
-    if (!response.ok) throw new Error('Stream failed');
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
     
-    const reader = response.body.getReader();
+    contentDiv.innerHTML = formatResponse(data.response);
+    extractAndApplyCode(data.response);
+  } catch (err) {
+    contentDiv.innerHTML = `<span class="error">Error: ${err.message}</span>`;
+  }
+  
+  isStreaming = false;
+}
+
+async function streamResponse(msg) {
+  const provider = document.getElementById('providerSelect').value;
+  const model = document.getElementById('modelSelect').value;
+  
+  isStreaming = true;
+  const assistantDiv = addToChat('assistant', '');
+  const contentDiv = assistantDiv.querySelector('.message-content');
+  let fullResponse = '';
+  
+  try {
+    const res = await fetch(`${API}/api/ai/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg, model: provider, specificModel: model })
+    });
+    
+    const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    let fullResponse = '';
-    
-    aiMsg.innerHTML = '';
     
     while (true) {
       const { done, value } = await reader.read();
@@ -320,359 +406,178 @@ async function sendMessage() {
       
       for (const line of lines) {
         if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          if (data === '[DONE]') break;
-          
           try {
-            const parsed = JSON.parse(data);
-            if (parsed.content) {
-              fullResponse += parsed.content;
-              aiMsg.innerHTML = formatMessage(fullResponse);
+            const data = JSON.parse(line.slice(6));
+            if (data.token) {
+              fullResponse += data.token;
+              contentDiv.innerHTML = formatResponse(fullResponse) + '<span class="cursor">▊</span>';
+              scrollChat();
+            } else if (data.error) {
+              throw new Error(data.error);
             }
-          } catch {}
+          } catch (e) {}
         }
       }
     }
     
-    // Extract files from response
-    extractFiles(fullResponse);
-    
+    contentDiv.innerHTML = formatResponse(fullResponse);
+    extractAndApplyCode(fullResponse);
   } catch (err) {
-    // Fallback to non-streaming
-    try {
-      const res = await fetch(`${API}/api/ai/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: buildPrompt(message),
-          provider: document.getElementById('providerSelect').value,
-          model: document.getElementById('modelSelect').value
-        })
-      });
-      
-      const data = await res.json();
-      aiMsg.innerHTML = formatMessage(data.response || data.error || 'No response');
-      extractFiles(data.response || '');
-    } catch (e) {
-      aiMsg.innerHTML = `<span style="color: var(--error)">Error: ${e.message}</span>`;
-    }
+    contentDiv.innerHTML = `<span class="error">Error: ${err.message}</span>`;
   }
   
   isStreaming = false;
-  document.getElementById('sendBtn').disabled = false;
-  
-  // Scroll to bottom
-  const chatBox = document.getElementById('chatMessages');
-  chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-function buildPrompt(message) {
-  const context = Object.entries(files).map(([name, content]) => 
-    `--- ${name} ---\n${content}`
-  ).join('\n\n');
-  
-  return `You are an expert coding assistant. Help the user build their project.
-
-Current project files:
-${context}
-
-User request: ${message}
-
-IMPORTANT: When providing code, use markdown code blocks with the filename like:
-\`\`\`html:index.html
-code here
-\`\`\`
-
-Always provide complete, working code.`;
-}
-
-function selectBestModel(message) {
-  const complex = message.length > 200 || 
-    /complex|difficult|advanced|algorithm|architecture|design|refactor|optimize/i.test(message);
-  
-  const simple = message.length < 50 && 
-    /fix|change|update|add|remove|simple|quick|small/i.test(message);
-  
-  if (complex) {
-    return { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022' };
-  } else if (simple) {
-    return { provider: 'groq', model: 'llama-3.1-8b-instant' };
-  } else {
-    return { provider: 'groq', model: 'llama-3.3-70b-versatile' };
-  }
-}
-
-function addMessage(role, content) {
-  const chatBox = document.getElementById('chatMessages');
+function addToChat(role, content) {
+  const chat = document.getElementById('chatMessages');
   const div = document.createElement('div');
   div.className = `message ${role}`;
-  div.innerHTML = role === 'user' ? escapeHtml(content) : formatMessage(content);
-  chatBox.appendChild(div);
-  chatBox.scrollTop = chatBox.scrollHeight;
+  div.innerHTML = `
+    <div class="message-icon">${role === 'user' ? '👤' : '🤖'}</div>
+    <div class="message-content">${formatResponse(content)}</div>
+  `;
+  chat.appendChild(div);
+  scrollChat();
   return div;
 }
 
-function formatMessage(text) {
-  // Convert markdown code blocks
-  let html = text.replace(/```(\w+)?(?::([^\n]+))?\n([\s\S]*?)```/g, (_, lang, filename, code) => {
-    const header = filename ? `<div style="background:var(--bg);padding:5px 10px;font-size:12px;border-radius:6px 6px 0 0;">${filename}</div>` : '';
-    return `${header}<pre style="margin-top:0;border-radius:${filename ? '0 0 6px 6px' : '6px'};"><code>${escapeHtml(code)}</code></pre>`;
-  });
-  
-  // Inline code
-  html = html.replace(/`([^`]+)`/g, '<code style="background:var(--bg);padding:2px 6px;border-radius:4px;">$1</code>');
-  
-  // Bold
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  
-  // Line breaks
-  html = html.replace(/\n/g, '<br>');
-  
-  return html;
+function scrollChat() {
+  const chat = document.getElementById('chatMessages');
+  chat.scrollTop = chat.scrollHeight;
 }
 
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
+function formatResponse(text) {
+  if (!text) return '';
+  // Basic markdown
+  return text
+    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="lang-$1">$2</code></pre>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>');
 }
 
-function extractFiles(response) {
-  const regex = /```(\w+)?(?::([^\n]+))?\n([\s\S]*?)```/g;
-  let match;
-  let extracted = false;
+function extractCodeBlocks(text) {
+  const result = { html: null, css: null, js: null };
   
-  while ((match = regex.exec(response)) !== null) {
-    let [_, lang, filename, code] = match;
-    
-    // Try to determine filename
-    if (!filename) {
-      if (lang === 'html') filename = 'index.html';
-      else if (lang === 'css') filename = 'style.css';
-      else if (lang === 'javascript' || lang === 'js') filename = 'app.js';
-      else if (lang === 'json') filename = 'data.json';
-    }
-    
-    if (filename) {
-      files[filename] = code.trim();
-      extracted = true;
-    }
+  // HTML
+  const htmlMatch = text.match(/```html\n([\s\S]*?)```/);
+  if (htmlMatch) result.html = htmlMatch[1].trim();
+  
+  // CSS
+  const cssMatch = text.match(/```css\n([\s\S]*?)```/);
+  if (cssMatch) result.css = cssMatch[1].trim();
+  
+  // JavaScript
+  const jsMatch = text.match(/```(?:javascript|js)\n([\s\S]*?)```/);
+  if (jsMatch) result.js = jsMatch[1].trim();
+  
+  return result;
+}
+
+function extractAndApplyCode(text) {
+  const extracted = extractCodeBlocks(text);
+  let updated = false;
+  
+  if (extracted.html) {
+    files['index.html'] = extracted.html;
+    updated = true;
+  }
+  if (extracted.css) {
+    files['style.css'] = extracted.css;
+    updated = true;
+  }
+  if (extracted.js) {
+    files['app.js'] = extracted.js;
+    updated = true;
   }
   
-  if (extracted) {
+  if (updated) {
     renderFiles();
     updatePreview();
   }
 }
 
-// ==================== MODEL SELECT ====================
+function handleKeyPress(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+// ==================== SETTINGS ====================
+function loadSettings() {
+  const settings = JSON.parse(localStorage.getItem('ai-settings') || '{}');
+  if (settings.provider) {
+    document.getElementById('providerSelect').value = settings.provider;
+  }
+  if (settings.githubToken) {
+    document.getElementById('githubToken').value = settings.githubToken;
+  }
+}
+
+function saveSettings() {
+  const settings = {
+    provider: document.getElementById('providerSelect').value,
+    githubToken: document.getElementById('githubToken').value
+  };
+  localStorage.setItem('ai-settings', JSON.stringify(settings));
+  updateModelOptions();
+  closeSettings();
+}
+
 function updateModelOptions() {
   const provider = document.getElementById('providerSelect').value;
   const modelSelect = document.getElementById('modelSelect');
   const models = MODELS[provider] || [];
-  
-  modelSelect.innerHTML = models.map(m => 
-    `<option value="${m}">${m.split('-').slice(-2).join('-')}</option>`
-  ).join('');
+  modelSelect.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
 }
 
-// ==================== SETTINGS ====================
-function openSettings() {
-  document.getElementById('settingsModal').classList.add('active');
-  document.getElementById('githubToken').value = localStorage.getItem('githubToken') || '';
-  document.getElementById('defaultProvider').value = localStorage.getItem('defaultProvider') || 'groq';
-}
-
-function closeSettings() {
-  document.getElementById('settingsModal').classList.remove('active');
-}
-
-function saveSettings() {
-  localStorage.setItem('githubToken', document.getElementById('githubToken').value);
-  localStorage.setItem('defaultProvider', document.getElementById('defaultProvider').value);
-  
-  // Apply default provider
-  document.getElementById('providerSelect').value = document.getElementById('defaultProvider').value;
-  updateModelOptions();
-  
-  closeSettings();
-}
-
-function loadSettings() {
-  const provider = localStorage.getItem('defaultProvider');
-  if (provider) {
-    document.getElementById('providerSelect').value = provider;
-    updateModelOptions();
-  }
-}
-
-// ==================== IMPORT / EXPORT ====================
+// ==================== IMPORT/EXPORT ====================
 function importProject() {
-  document.getElementById('importModal').classList.add('active');
-}
-
-function closeImportModal() {
-  document.getElementById('importModal').classList.remove('active');
-  document.getElementById('gitImportSection').classList.add('hidden');
-}
-
-function importFromFile() {
-  document.getElementById('fileInput').click();
-  closeImportModal();
-}
-
-function handleFileUpload(e) {
-  Array.from(e.target.files).forEach(file => {
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      files[file.name] = ev.target.result;
-      renderFiles();
-      updatePreview();
-    };
-    reader.readAsText(file);
-  });
-  e.target.value = '';
-}
-
-function importFromZip() {
-  document.getElementById('zipInput').click();
-  closeImportModal();
-}
-
-async function handleZipUpload(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  
-  try {
-    const JSZip = (await import('https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm')).default;
-    const zip = await JSZip.loadAsync(file);
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.zip,.json';
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
     
-    for (const [path, zipEntry] of Object.entries(zip.files)) {
-      if (!zipEntry.dir) {
-        const name = path.split('/').pop();
-        const content = await zipEntry.async('text');
-        files[name] = content;
+    if (file.name.endsWith('.json')) {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (data.files) {
+        files = data.files;
+        renderFiles();
+        updatePreview();
+        addToChat('assistant', '✅ Project imported!');
       }
+    } else {
+      addToChat('assistant', '📦 ZIP import coming soon. Use JSON for now.');
     }
-    
-    renderFiles();
-    updatePreview();
-    alert('ZIP imported successfully!');
-  } catch (err) {
-    alert('Failed to import ZIP: ' + err.message);
-  }
-  
-  e.target.value = '';
-}
-
-function showGitImport() {
-  document.getElementById('gitImportSection').classList.remove('hidden');
-}
-
-function importFromGit() {
-  document.getElementById('importModal').classList.add('active');
-  showGitImport();
-}
-
-async function doGitImport() {
-  const url = document.getElementById('gitUrl').value;
-  if (!url) return alert('Enter a GitHub URL');
-  
-  // Parse URL
-  const match = url.match(/github\.com\/([^\/]+)\/([^\/]+)/);
-  if (!match) return alert('Invalid GitHub URL');
-  
-  const [_, owner, repo] = match;
-  
-  try {
-    const res = await fetch(`${API}/api/git/import`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ owner, repo: repo.replace('.git', '') })
-    });
-    
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    
-    // Add files
-    data.files.forEach(f => {
-      files[f.name] = f.content;
-    });
-    
-    renderFiles();
-    updatePreview();
-    closeImportModal();
-    alert(`Imported ${data.files.length} files from ${owner}/${repo}`);
-  } catch (err) {
-    alert('Import failed: ' + err.message);
-  }
+  };
+  input.click();
 }
 
 function exportProject() {
-  // Export as JSON
   const data = {
+    name: 'AI Project',
+    version: '1.0',
     files: files,
     exportedAt: new Date().toISOString()
   };
   
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'project-export.json';
+  a.download = 'project.json';
   a.click();
-  
   URL.revokeObjectURL(url);
 }
 
 // ==================== DEPLOY ====================
-function deployProject() {
-  document.getElementById('deployModal').classList.add('active');
-  document.getElementById('deployStatus').innerHTML = '';
-}
-
-function closeDeployModal() {
-  document.getElementById('deployModal').classList.remove('active');
-}
-
-async function deployToNetlify() {
-  const status = document.getElementById('deployStatus');
-  status.className = 'deploy-status loading';
-  status.textContent = 'Deploying to Netlify...';
-  
-  try {
-    // Create file list for Netlify
-    const fileList = Object.entries(files).map(([name, content]) => ({
-      path: '/' + name,
-      content: content
-    }));
-    
-    // Deploy
-    const res = await fetch(`${API}/api/deploy/netlify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ files: fileList })
-    });
-    
-    const data = await res.json();
-    
-    if (data.url) {
-      status.className = 'deploy-status success';
-      status.innerHTML = `✅ Deployed! <a href="${data.url}" target="_blank">${data.url}</a>`;
-    } else {
-      throw new Error(data.error || 'Deploy failed');
-    }
-  } catch (err) {
-    status.className = 'deploy-status error';
-    status.textContent = '❌ ' + err.message;
-  }
-}
-
-async function deployToVercel() {
-  const status = document.getElementById('deployStatus');
-  status.className = 'deploy-status loading';
-  status.textContent = 'Deploying to Vercel...';
+async function deployProject() {
+  addToChat('assistant', '🚀 Deploying to Vercel...');
   
   try {
     const res = await fetch(`${API}/api/deploy/vercel`, {
@@ -683,91 +588,97 @@ async function deployToVercel() {
     
     const data = await res.json();
     
-    if (data.url) {
-      status.className = 'deploy-status success';
-      status.innerHTML = `✅ Deployed! <a href="${data.url}" target="_blank">${data.url}</a>`;
+    if (data.success && data.url) {
+      addToChat('assistant', `✅ Deployed!\n\n🔗 **URL:** [${data.url}](${data.url})\n\nYour app is live!`);
     } else {
       throw new Error(data.error || 'Deploy failed');
     }
   } catch (err) {
-    status.className = 'deploy-status error';
-    status.textContent = '❌ ' + err.message;
+    addToChat('assistant', `❌ Deploy failed: ${err.message}`);
   }
 }
 
-async function deployToGithub() {
-  const token = localStorage.getItem('githubToken');
-  if (!token) {
-    alert('Please add your GitHub token in Settings first');
-    closeDeployModal();
-    openSettings();
-    return;
-  }
+// ==================== GIT ====================
+async function gitImport() {
+  const url = prompt('GitHub repo URL (e.g., https://github.com/user/repo):');
+  if (!url) return;
   
-  const repoName = prompt('Repository name:', 'my-ai-project');
-  if (!repoName) return;
-  
-  const status = document.getElementById('deployStatus');
-  status.className = 'deploy-status loading';
-  status.textContent = 'Pushing to GitHub...';
+  addToChat('assistant', '📥 Importing from GitHub...');
   
   try {
-    const res = await fetch(`${API}/api/git/push`, {
+    const res = await fetch(`${API}/api/git/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        token,
-        repo: repoName,
-        files: Object.entries(files).map(([name, content]) => ({ name, content }))
-      })
+      body: JSON.stringify({ repoUrl: url })
     });
     
     const data = await res.json();
     
-    if (data.url) {
-      status.className = 'deploy-status success';
-      status.innerHTML = `✅ Pushed! <a href="${data.url}" target="_blank">${data.url}</a>`;
+    if (data.files) {
+      // Merge imported files
+      Object.assign(files, data.files);
+      renderFiles();
+      updatePreview();
+      addToChat('assistant', `✅ Imported ${Object.keys(data.files).length} files from GitHub!`);
     } else {
-      throw new Error(data.error || 'Push failed');
+      throw new Error(data.error || 'Import failed');
     }
   } catch (err) {
-    status.className = 'deploy-status error';
-    status.textContent = '❌ ' + err.message;
+    addToChat('assistant', `❌ Import failed: ${err.message}`);
   }
 }
 
-// ==================== PANELS ====================
-function toggleFiles() {
-  const panel = document.getElementById('filesPanel');
-  const overlay = document.getElementById('overlay');
+// ==================== DATABASE ====================
+async function runSQL() {
+  const sql = prompt('Enter SQL query:');
+  if (!sql) return;
   
-  panel.classList.toggle('open');
+  addToChat('user', `SQL: ${sql}`);
   
-  if (window.innerWidth <= 768) {
-    overlay.classList.toggle('active', panel.classList.contains('open'));
-    document.getElementById('previewPanel').classList.remove('open');
+  try {
+    const res = await fetch(`${API}/api/db/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql })
+    });
+    
+    const data = await res.json();
+    
+    if (data.error) throw new Error(data.error);
+    
+    if (data.rows) {
+      addToChat('assistant', `✅ Query returned ${data.rows.length} rows:\n\`\`\`json\n${JSON.stringify(data.rows, null, 2)}\n\`\`\``);
+    } else {
+      addToChat('assistant', `✅ Query executed successfully.`);
+    }
+  } catch (err) {
+    addToChat('assistant', `❌ SQL Error: ${err.message}`);
   }
 }
 
-function togglePreview() {
-  const panel = document.getElementById('previewPanel');
-  const overlay = document.getElementById('overlay');
-  
-  panel.classList.toggle('open');
-  
-  if (window.innerWidth <= 768) {
-    overlay.classList.toggle('active', panel.classList.contains('open'));
-    document.getElementById('filesPanel').classList.remove('open');
-  }
-}
-
-function closeAllPanels() {
-  document.getElementById('filesPanel').classList.remove('open');
-  document.getElementById('previewPanel').classList.remove('open');
-  document.getElementById('overlay').classList.remove('active');
-}
-
-// ==================== ATTACH ====================
+// ==================== ATTACHMENTS ====================
 function attachFile() {
-  document.getElementById('fileInput').click();
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+  input.onchange = async (e) => {
+    for (const file of e.target.files) {
+      const text = await file.text();
+      files[file.name] = text;
+    }
+    renderFiles();
+    updatePreview();
+    addToChat('assistant', `📎 Added ${e.target.files.length} file(s)`);
+  };
+  input.click();
+}
+
+// Clear chat
+function clearChat() {
+  document.getElementById('chatMessages').innerHTML = `
+    <div class="message assistant">
+      <div class="message-icon">🤖</div>
+      <div class="message-content">Ready to build! Describe what you want to create.</div>
+    </div>
+  `;
 }
