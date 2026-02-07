@@ -408,8 +408,8 @@ async function streamResponse(msg) {
         if (line.startsWith('data: ')) {
           try {
             const data = JSON.parse(line.slice(6));
-            if (data.token) {
-              fullResponse += data.token;
+            if (data.text) {
+              fullResponse += data.text;
               contentDiv.innerHTML = formatResponse(fullResponse) + '<span class="cursor">▊</span>';
               scrollChat();
             } else if (data.error) {
