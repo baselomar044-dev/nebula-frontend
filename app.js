@@ -1,4 +1,4 @@
-// AI App - Production Ready with Model Selection
+// AI App - Production Ready with Real Error Handling
 const API = 'https://nebula-api-production.up.railway.app';
 
 // State
@@ -9,9 +9,18 @@ let consoleLogs = [];
 let isStreaming = false;
 let lastError = null;
 
+// Models config
+const MODELS = {
+  anthropic: ['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
+  openai: ['gpt-4o', 'gpt-4o-mini'],
+  groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+  gemini: ['gemini-1.5-pro', 'gemini-1.5-flash']
+};
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
   loadSettings();
+  updateModelOptions();
   
   // Default files
   files['index.html'] = `<!DOCTYPE html>
@@ -91,10 +100,6 @@ function selectFile(name) {
   }
 }
 
-function setPreviewTab(ext) {
-  switchTab(ext);
-}
-
 function createFile() {
   const name = prompt('File name (e.g., component.js):');
   if (name && !files[name]) {
@@ -115,212 +120,198 @@ function deleteFile(name, e) {
   }
 }
 
-// ==================== CHAT ====================
-function addToChat(role, content) {
-  const chat = document.getElementById('chatMessages');
-  const div = document.createElement('div');
-  div.className = `message ${role}`;
-  div.innerHTML = `
-    <div class="message-icon">${role === 'user' ? '👤' : '🤖'}</div>
-    <div class="message-content">${content}</div>
-  `;
-  chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
-  return div;
-}
-
-function formatResponse(text) {
-  // Format code blocks
-  return text.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
-    return `<pre><code class="language-${lang || 'text'}">${escapeHtml(code.trim())}</code></pre>`;
-  }).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\n/g, '<br>');
-}
-
-function escapeHtml(text) {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-// ==================== AI COMMUNICATION ====================
-function getSelectedModel() {
-  const selector = document.getElementById('modelSelect');
-  return selector ? selector.value : 'auto';
-}
-
-async function sendMessage() {
-  const input = document.getElementById('userInput');
-  const msg = input.value.trim();
-  if (!msg || isStreaming) return;
-  
-  input.value = '';
-  input.style.height = 'auto';
-  addToChat('user', msg);
-  
-  await streamResponse(msg);
-}
-
-async function streamResponse(msg) {
-  const model = getSelectedModel();
-  
-  isStreaming = true;
-  const assistantDiv = addToChat('assistant', '');
-  const contentDiv = assistantDiv.querySelector('.message-content');
-  contentDiv.innerHTML = '<span class="typing">Thinking...</span>';
-  
-  let fullText = '';
-  
-  try {
-    const res = await fetch(`${API}/api/ai/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: msg, model: model })
-    });
-    
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.text) {
-              fullText += data.text;
-              contentDiv.innerHTML = formatResponse(fullText);
-              document.getElementById('chatMessages').scrollTop = 
-                document.getElementById('chatMessages').scrollHeight;
-            }
-            if (data.done) {
-              extractAndApplyCode(fullText);
-            }
-            if (data.error) {
-              contentDiv.innerHTML += `<br><span class="error">Error: ${data.error}</span>`;
-            }
-          } catch (e) {}
-        }
-      }
-    }
-    
-    // Final extraction
-    if (fullText) {
-      extractAndApplyCode(fullText);
-    }
-  } catch (err) {
-    contentDiv.innerHTML = `<span class="error">Error: ${err.message}</span>`;
-  }
-  
-  isStreaming = false;
-}
-
-// ==================== CODE EXTRACTION ====================
-function extractAndApplyCode(text) {
-  // Pattern: **filename.ext** followed by code block
-  const filePattern = /\*\*([^*]+\.[a-z]+)\*\*\s*```[\w]*\n([\s\S]*?)```/gi;
-  let match;
-  let foundAny = false;
-  
-  while ((match = filePattern.exec(text)) !== null) {
-    const [, filename, code] = match;
-    const cleanName = filename.trim().toLowerCase();
-    files[cleanName] = code.trim();
-    foundAny = true;
-  }
-  
-  // Also try: filename.ext:\n```
-  const altPattern = /([a-zA-Z0-9_-]+\.[a-z]+):\s*```[\w]*\n([\s\S]*?)```/gi;
-  while ((match = altPattern.exec(text)) !== null) {
-    const [, filename, code] = match;
-    files[filename.trim().toLowerCase()] = code.trim();
-    foundAny = true;
-  }
-  
-  if (foundAny) {
-    renderFiles();
-    updatePreview();
-  }
-}
-
 // ==================== PREVIEW ====================
 function updatePreview() {
-  const frame = document.getElementById('previewFrame');
-  const html = files['index.html'] || '<html><body><p>No HTML file</p></body></html>';
-  const css = files['style.css'] || files['styles.css'] || '';
-  const js = files['app.js'] || files['script.js'] || files['main.js'] || '';
+  const preview = document.getElementById('preview');
+  const html = files['index.html'] || '';
+  const css = files['style.css'] || '';
+  const js = files['app.js'] || '';
   
-  const fullHtml = html
-    .replace('</head>', `<style>${css}</style></head>`)
-    .replace('</body>', `<script>
-      window.onerror = function(msg, url, line, col, error) {
-        parent.postMessage({ type: 'error', message: msg, line: line }, '*');
-        return false;
-      };
-      try {
-        ${js}
-      } catch(e) {
-        parent.postMessage({ type: 'error', message: e.message }, '*');
-      }
-    <\/script></body>`);
+  // Build full HTML with error catching
+  const fullHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>${css}</style>
+</head>
+<body>
+${html.replace(/<html>|<\/html>|<head>[\s\S]*<\/head>|<!DOCTYPE html>/gi, '').replace(/<link[^>]*>/gi, '').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')}
+<script>
+// Console capture
+const _log = console.log;
+const _error = console.error;
+const _warn = console.warn;
+console.log = (...args) => { _log(...args); parent.postMessage({type:'console',level:'log',args:args.map(a=>String(a))},'*'); };
+console.error = (...args) => { _error(...args); parent.postMessage({type:'console',level:'error',args:args.map(a=>String(a))},'*'); };
+console.warn = (...args) => { _warn(...args); parent.postMessage({type:'console',level:'warn',args:args.map(a=>String(a))},'*'); };
+
+// Error capture
+window.onerror = function(msg, url, line, col, error) {
+  const errorInfo = {
+    message: msg,
+    line: line,
+    column: col,
+    stack: error ? error.stack : null
+  };
+  parent.postMessage({type:'error', error: errorInfo},'*');
+  return false;
+};
+
+// Syntax check and run
+try {
+  ${js}
+} catch(e) {
+  parent.postMessage({type:'error', error: {message: e.message, line: e.lineNumber || 0, stack: e.stack}},'*');
+}
+<\/script>
+</body>
+</html>`;
+
+  preview.srcdoc = fullHtml;
   
-  frame.srcdoc = fullHtml;
+  // Update code views
+  document.getElementById('htmlCode').textContent = files['index.html'] || '';
+  document.getElementById('cssCode').textContent = files['style.css'] || '';
+  document.getElementById('jsCode').textContent = files['app.js'] || '';
+  
+  // Clear previous errors
+  clearError();
 }
 
-function switchTab(tab) {
-  currentTab = tab;
-  document.querySelectorAll('.preview-tabs .tab').forEach(t => {
-    t.classList.toggle('active', t.textContent.toLowerCase() === tab);
-  });
-  
-  const frame = document.getElementById('previewFrame');
-  const codeView = document.getElementById('codeView');
-  const consoleView = document.getElementById('consoleView');
-  
-  if (tab === 'live') {
-    frame.style.display = 'block';
-    codeView.style.display = 'none';
-    consoleView.style.display = 'none';
-  } else if (tab === 'console') {
-    frame.style.display = 'none';
-    codeView.style.display = 'none';
-    consoleView.style.display = 'block';
-    consoleView.innerHTML = consoleLogs.map(l => `<div class="${l.type}">${l.text}</div>`).join('') || 'No logs yet';
-  } else {
-    frame.style.display = 'none';
-    codeView.style.display = 'block';
-    consoleView.style.display = 'none';
-    
-    const fileMap = { html: 'index.html', css: 'style.css', js: 'app.js' };
-    codeView.textContent = files[fileMap[tab]] || `// No ${tab} file`;
+// Listen for messages from iframe
+window.addEventListener('message', (e) => {
+  if (e.data.type === 'console') {
+    addConsoleLog(e.data.level, e.data.args.join(' '));
+  } else if (e.data.type === 'error') {
+    showError(e.data.error);
   }
+});
+
+function addConsoleLog(level, msg) {
+  consoleLogs.push({ level, msg, time: new Date().toLocaleTimeString() });
+  updateConsole();
+}
+
+function updateConsole() {
+  const el = document.getElementById('consoleOutput');
+  el.innerHTML = consoleLogs.map(log => 
+    `<div class="console-${log.level}">[${log.time}] ${log.msg}</div>`
+  ).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function clearConsole() {
+  consoleLogs = [];
+  updateConsole();
+}
+
+function showError(error) {
+  lastError = error;
+  const el = document.getElementById('errorBanner');
+  const msg = error.message || 'Unknown error';
+  const line = error.line ? ` (line ${error.line})` : '';
+  el.innerHTML = `⚠️ Error: ${msg}${line} <button class="auto-fix-btn" onclick="autoFixError()">Auto Fix</button>`;
+  el.style.display = 'flex';
+  addConsoleLog('error', `${msg}${line}`);
+}
+
+function clearError() {
+  lastError = null;
+  document.getElementById('errorBanner').style.display = 'none';
+}
+
+async function autoFixError() {
+  if (!lastError) return;
+  
+  const btn = document.querySelector('.auto-fix-btn');
+  btn.textContent = 'Fixing...';
+  btn.disabled = true;
+  
+  // Gather all code context
+  const codeContext = `
+HTML (index.html):
+\`\`\`html
+${files['index.html'] || ''}
+\`\`\`
+
+CSS (style.css):
+\`\`\`css
+${files['style.css'] || ''}
+\`\`\`
+
+JavaScript (app.js):
+\`\`\`javascript
+${files['app.js'] || ''}
+\`\`\`
+
+ERROR: ${lastError.message}
+${lastError.line ? `Line: ${lastError.line}` : ''}
+${lastError.stack ? `Stack: ${lastError.stack}` : ''}
+`;
+
+  try {
+    const res = await fetch(`${API}/api/ai/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: `Fix this JavaScript error. Return ONLY the corrected code files, no explanations. Format your response with code blocks like:
+
+\`\`\`html
+// corrected html
+\`\`\`
+
+\`\`\`css  
+// corrected css
+\`\`\`
+
+\`\`\`javascript
+// corrected js
+\`\`\`
+
+Here's the code and error:
+${codeContext}`,
+        model: 'groq'
+      })
+    });
+    
+    const data = await res.json();
+    if (data.text) {
+      // Extract fixed code
+      const extracted = extractCodeBlocks(data.text);
+      if (extracted.html) files['index.html'] = extracted.html;
+      if (extracted.css) files['style.css'] = extracted.css;
+      if (extracted.js) files['app.js'] = extracted.js;
+      
+      renderFiles();
+      updatePreview();
+      addToChat('assistant', '✅ Fixed! Check the preview.');
+    }
+  } catch (err) {
+    addToChat('assistant', `❌ Fix failed: ${err.message}`);
+  }
+  
+  btn.textContent = 'Auto Fix';
+  btn.disabled = false;
+}
+
+function setPreviewTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`[onclick="setPreviewTab('${tab}')"]`)?.classList.add('active');
+  
+  document.getElementById('livePreview').style.display = tab === 'live' ? 'block' : 'none';
+  document.getElementById('htmlCode').style.display = tab === 'html' ? 'block' : 'none';
+  document.getElementById('cssCode').style.display = tab === 'css' ? 'block' : 'none';
+  document.getElementById('jsCode').style.display = tab === 'js' ? 'block' : 'none';
+  document.getElementById('consoleView').style.display = tab === 'console' ? 'block' : 'none';
 }
 
 function refreshPreview() {
   updatePreview();
 }
 
-function expandPreview() {
-  const modal = document.getElementById('expandedModal');
-  const frame = document.getElementById('expandedFrame');
-  modal.style.display = 'flex';
-  
-  const html = files['index.html'] || '';
-  const css = files['style.css'] || '';
-  const js = files['app.js'] || '';
-  
-  frame.srcdoc = html
-    .replace('</head>', `<style>${css}</style></head>`)
-    .replace('</body>', `<script>${js}<\/script></body>`);
-}
-
-function closeExpanded() {
-  document.getElementById('expandedModal').style.display = 'none';
+function toggleExpandPreview() {
+  document.getElementById('previewPanel').classList.toggle('expanded');
 }
 
 // ==================== PANELS ====================
@@ -333,92 +324,248 @@ function togglePreview() {
 }
 
 function toggleSettings() {
-  const modal = document.getElementById('settingsModal');
-  modal.style.display = modal.style.display === 'none' ? 'flex' : 'none';
+  document.getElementById('settingsModal').classList.toggle('open');
 }
 
-// ==================== ACTIONS ====================
-function handleKeyDown(e) {
+function closeSettings() {
+  document.getElementById('settingsModal').classList.remove('open');
+}
+
+// ==================== CHAT ====================
+async function sendMessage() {
+  const input = document.getElementById('userInput');
+  const msg = input.value.trim();
+  if (!msg || isStreaming) return;
+  
+  input.value = '';
+  input.style.height = 'auto';
+  addToChat('user', msg);
+  
+  const streamEnabled = document.getElementById('streamToggle')?.checked !== false;
+  
+  if (streamEnabled) {
+    await streamResponse(msg);
+  } else {
+    await regularResponse(msg);
+  }
+}
+
+async function regularResponse(msg) {
+  const provider = document.getElementById('providerSelect').value;
+  const model = document.getElementById('modelSelect').value;
+  
+  isStreaming = true;
+  const assistantDiv = addToChat('assistant', '');
+  const contentDiv = assistantDiv.querySelector('.message-content');
+  contentDiv.innerHTML = '<span class="typing">Thinking...</span>';
+  
+  try {
+    const res = await fetch(`${API}/api/ai/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: "user", content: msg }], model: model })
+    });
+    
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    
+    contentDiv.innerHTML = formatResponse(data.text);
+    extractAndApplyCode(data.text);
+  } catch (err) {
+    contentDiv.innerHTML = `<span class="error">Error: ${err.message}</span>`;
+  }
+  
+  isStreaming = false;
+}
+
+async function streamResponse(msg) {
+  const provider = document.getElementById('providerSelect').value;
+  const model = document.getElementById('modelSelect').value;
+  
+  isStreaming = true;
+  const assistantDiv = addToChat('assistant', '');
+  const contentDiv = assistantDiv.querySelector('.message-content');
+  let fullResponse = '';
+  
+  try {
+    const res = await fetch(`${API}/api/ai/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: "user", content: msg }], model: model })
+    });
+    
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\n');
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.text) {
+              fullResponse += data.text;
+              contentDiv.innerHTML = formatResponse(fullResponse) + '<span class="cursor">▊</span>';
+              scrollChat();
+            } else if (data.error) {
+              throw new Error(data.error);
+            }
+          } catch (e) {}
+        }
+      }
+    }
+    
+    contentDiv.innerHTML = formatResponse(fullResponse);
+    extractAndApplyCode(fullResponse);
+  } catch (err) {
+    contentDiv.innerHTML = `<span class="error">Error: ${err.message}</span>`;
+  }
+  
+  isStreaming = false;
+}
+
+function addToChat(role, content) {
+  const chat = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = `message ${role}`;
+  div.innerHTML = `
+    <div class="message-icon">${role === 'user' ? '👤' : '🤖'}</div>
+    <div class="message-content">${formatResponse(content)}</div>
+  `;
+  chat.appendChild(div);
+  scrollChat();
+  return div;
+}
+
+function scrollChat() {
+  const chat = document.getElementById('chatMessages');
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function formatResponse(text) {
+  if (!text) return '';
+  // Basic markdown
+  return text
+    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="lang-$1">$2</code></pre>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>');
+}
+
+function extractCodeBlocks(text) {
+  const result = { html: null, css: null, js: null };
+  
+  // HTML
+  const htmlMatch = text.match(/```html\n([\s\S]*?)```/);
+  if (htmlMatch) result.html = htmlMatch[1].trim();
+  
+  // CSS
+  const cssMatch = text.match(/```css\n([\s\S]*?)```/);
+  if (cssMatch) result.css = cssMatch[1].trim();
+  
+  // JavaScript
+  const jsMatch = text.match(/```(?:javascript|js)\n([\s\S]*?)```/);
+  if (jsMatch) result.js = jsMatch[1].trim();
+  
+  return result;
+}
+
+function extractAndApplyCode(text) {
+  const extracted = extractCodeBlocks(text);
+  let updated = false;
+  
+  if (extracted.html) {
+    files['index.html'] = extracted.html;
+    updated = true;
+  }
+  if (extracted.css) {
+    files['style.css'] = extracted.css;
+    updated = true;
+  }
+  if (extracted.js) {
+    files['app.js'] = extracted.js;
+    updated = true;
+  }
+  
+  if (updated) {
+    renderFiles();
+    updatePreview();
+  }
+}
+
+function handleKeyPress(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendMessage();
   }
 }
 
-function autoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 150) + 'px';
-}
-
-async function gitImport() {
-  const url = prompt('GitHub repo URL (e.g., https://github.com/user/repo):');
-  if (!url) return;
-  
-  try {
-    addToChat('assistant', '⏳ Importing from GitHub...');
-    const res = await fetch(`${API}/api/git/import`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
-    });
-    const data = await res.json();
-    
-    if (data.files) {
-      Object.assign(files, data.files);
-      renderFiles();
-      updatePreview();
-      addToChat('assistant', `✅ Imported ${Object.keys(data.files).length} files!`);
-    } else {
-      addToChat('assistant', `❌ Import failed: ${data.error}`);
-    }
-  } catch (err) {
-    addToChat('assistant', `❌ Error: ${err.message}`);
+// ==================== SETTINGS ====================
+function loadSettings() {
+  const settings = JSON.parse(localStorage.getItem('ai-settings') || '{}');
+  if (settings.provider) {
+    document.getElementById('providerSelect').value = settings.provider;
+  }
+  if (settings.githubToken) {
+    document.getElementById('githubToken').value = settings.githubToken;
   }
 }
 
-async function runSQL() {
-  const query = prompt('SQL Query (e.g., SELECT * FROM users):');
-  if (!query) return;
-  
-  try {
-    const res = await fetch(`${API}/api/db/query`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sql: query })
-    });
-    const data = await res.json();
-    addToChat('assistant', `📊 Result:\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``);
-  } catch (err) {
-    addToChat('assistant', `❌ SQL Error: ${err.message}`);
-  }
+function saveSettings() {
+  const settings = {
+    provider: document.getElementById('providerSelect').value,
+    githubToken: document.getElementById('githubToken').value
+  };
+  localStorage.setItem('ai-settings', JSON.stringify(settings));
+  updateModelOptions();
+  closeSettings();
 }
 
+function updateModelOptions() {
+  const provider = document.getElementById('providerSelect').value;
+  const modelSelect = document.getElementById('modelSelect');
+  const models = MODELS[provider] || [];
+  modelSelect.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
+}
+
+// ==================== IMPORT/EXPORT ====================
 function importProject() {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.json,.zip';
+  input.accept = '.zip,.json';
   input.onchange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     
-    try {
+    if (file.name.endsWith('.json')) {
       const text = await file.text();
       const data = JSON.parse(text);
       if (data.files) {
-        Object.assign(files, data.files);
+        files = data.files;
         renderFiles();
         updatePreview();
-        addToChat('assistant', `✅ Imported ${Object.keys(data.files).length} files!`);
+        addToChat('assistant', '✅ Project imported!');
       }
-    } catch (err) {
-      addToChat('assistant', '❌ Invalid project file');
+    } else {
+      addToChat('assistant', '📦 ZIP import coming soon. Use JSON for now.');
     }
   };
   input.click();
 }
 
 function exportProject() {
-  const data = { files, exportedAt: new Date().toISOString() };
+  const data = {
+    name: 'AI Project',
+    version: '1.0',
+    files: files,
+    exportedAt: new Date().toISOString()
+  };
+  
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -426,9 +573,9 @@ function exportProject() {
   a.download = 'project.json';
   a.click();
   URL.revokeObjectURL(url);
-  addToChat('assistant', '✅ Project exported!');
 }
 
+// ==================== DEPLOY ====================
 async function deployProject() {
   addToChat('assistant', '🚀 Deploying to Vercel...');
   
@@ -438,18 +585,78 @@ async function deployProject() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ files })
     });
+    
     const data = await res.json();
     
-    if (data.url) {
-      addToChat('assistant', `✅ Deployed! <a href="${data.url}" target="_blank">${data.url}</a>`);
+    if (data.success && data.url) {
+      addToChat('assistant', `✅ Deployed!\n\n🔗 **URL:** [${data.url}](${data.url})\n\nYour app is live!`);
     } else {
-      addToChat('assistant', `❌ Deploy failed: ${data.error}`);
+      throw new Error(data.error || 'Deploy failed');
     }
   } catch (err) {
-    addToChat('assistant', `❌ Error: ${err.message}`);
+    addToChat('assistant', `❌ Deploy failed: ${err.message}`);
   }
 }
 
+// ==================== GIT ====================
+async function gitImport() {
+  const url = prompt('GitHub repo URL (e.g., https://github.com/user/repo):');
+  if (!url) return;
+  
+  addToChat('assistant', '📥 Importing from GitHub...');
+  
+  try {
+    const res = await fetch(`${API}/api/git/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repoUrl: url })
+    });
+    
+    const data = await res.json();
+    
+    if (data.files) {
+      // Merge imported files
+      Object.assign(files, data.files);
+      renderFiles();
+      updatePreview();
+      addToChat('assistant', `✅ Imported ${Object.keys(data.files).length} files from GitHub!`);
+    } else {
+      throw new Error(data.error || 'Import failed');
+    }
+  } catch (err) {
+    addToChat('assistant', `❌ Import failed: ${err.message}`);
+  }
+}
+
+// ==================== DATABASE ====================
+async function runSQL() {
+  const sql = prompt('Enter SQL query:');
+  if (!sql) return;
+  
+  addToChat('user', `SQL: ${sql}`);
+  
+  try {
+    const res = await fetch(`${API}/api/db/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql })
+    });
+    
+    const data = await res.json();
+    
+    if (data.error) throw new Error(data.error);
+    
+    if (data.rows) {
+      addToChat('assistant', `✅ Query returned ${data.rows.length} rows:\n\`\`\`json\n${JSON.stringify(data.rows, null, 2)}\n\`\`\``);
+    } else {
+      addToChat('assistant', `✅ Query executed successfully.`);
+    }
+  } catch (err) {
+    addToChat('assistant', `❌ SQL Error: ${err.message}`);
+  }
+}
+
+// ==================== ATTACHMENTS ====================
 function attachFile() {
   const input = document.createElement('input');
   input.type = 'file';
@@ -466,70 +673,12 @@ function attachFile() {
   input.click();
 }
 
-async function autoFix() {
-  if (!lastError) return;
-  
-  addToChat('assistant', '🔧 Analyzing error...');
-  
-  try {
-    const res = await fetch(`${API}/api/debug/fix`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        error: lastError,
-        files: files
-      })
-    });
-    const data = await res.json();
-    
-    if (data.fix) {
-      addToChat('assistant', data.fix);
-      extractAndApplyCode(data.fix);
-    }
-  } catch (err) {
-    addToChat('assistant', `❌ Error: ${err.message}`);
-  }
-  
-  lastError = null;
-  document.getElementById('errorBar').style.display = 'none';
+// Clear chat
+function clearChat() {
+  document.getElementById('chatMessages').innerHTML = `
+    <div class="message assistant">
+      <div class="message-icon">🤖</div>
+      <div class="message-content">Ready to build! Describe what you want to create.</div>
+    </div>
+  `;
 }
-
-// Error listener
-window.addEventListener('message', (e) => {
-  if (e.data?.type === 'error') {
-    lastError = e.data.message;
-    const errorBar = document.getElementById('errorBar');
-    const errorText = document.getElementById('errorText');
-    errorText.textContent = `⚠️ Error: ${e.data.message}`;
-    errorBar.style.display = 'flex';
-    consoleLogs.push({ type: 'error', text: e.data.message });
-  }
-});
-
-// Settings
-function loadSettings() {
-  const saved = localStorage.getItem('aiAppSettings');
-  if (saved) {
-    try {
-      const settings = JSON.parse(saved);
-      if (settings.model) {
-        const selector = document.getElementById('modelSelect');
-        if (selector) selector.value = settings.model;
-      }
-    } catch (e) {}
-  }
-}
-
-function saveSettings() {
-  const settings = {
-    model: getSelectedModel()
-  };
-  localStorage.setItem('aiAppSettings', JSON.stringify(settings));
-}
-
-// Save model selection when changed
-document.addEventListener('change', (e) => {
-  if (e.target.id === 'modelSelect') {
-    saveSettings();
-  }
-});
