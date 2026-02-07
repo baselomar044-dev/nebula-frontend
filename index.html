@@ -2,97 +2,292 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI</title>
-  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root { --bg: #0a0a0f; --panel: #12121a; --border: #1e1e2e; --text: #e4e4e7; --dim: #71717a; --blue: #3b82f6; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+    
+    /* LAYOUT */
+    .app { display: flex; height: 100vh; }
+    .files-panel { width: 220px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+    .main-area { flex: 1; display: flex; flex-direction: column; }
+    .preview-panel { width: 45%; background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; }
+    
+    /* FILES */
+    .panel-header { padding: 12px 16px; font-size: 11px; font-weight: 600; color: var(--dim); letter-spacing: 1px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .panel-header button { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 14px; }
+    .panel-header button:hover { color: var(--text); }
+    .file-list { flex: 1; overflow-y: auto; padding: 8px; }
+    .file-item { padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--dim); display: flex; align-items: center; gap: 8px; }
+    .file-item:hover { background: var(--border); color: var(--text); }
+    .file-item.active { background: var(--blue); color: #fff; }
+    
+    /* CHAT */
+    .chat-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .messages { flex: 1; overflow-y: auto; padding: 20px; }
+    .msg { margin-bottom: 16px; max-width: 85%; }
+    .msg.user { margin-left: auto; }
+    .msg-content { padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6; }
+    .msg.user .msg-content { background: var(--blue); }
+    .msg.assistant .msg-content { background: var(--panel); border: 1px solid var(--border); }
+    .msg pre { background: #000; padding: 12px; border-radius: 6px; overflow-x: auto; margin-top: 8px; font-size: 12px; }
+    .msg code { font-family: 'Monaco', monospace; }
+    
+    .input-area { padding: 16px; border-top: 1px solid var(--border); display: flex; gap: 12px; align-items: flex-end; }
+    .input-area textarea { flex: 1; background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 12px; border-radius: 8px; resize: none; font-size: 14px; min-height: 50px; max-height: 150px; }
+    .input-area textarea:focus { outline: none; border-color: var(--blue); }
+    .input-area button { background: var(--blue); border: none; color: #fff; padding: 12px 24px; border-radius: 8px; font-weight: 600; cursor: pointer; }
+    .input-area button:disabled { opacity: 0.5; }
+    
+    /* TOOLBAR */
+    .toolbar { padding: 8px 16px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
+    .toolbar select { background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; font-size: 12px; }
+    .toolbar button { background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+    .toolbar button:hover { background: var(--border); }
+    .toolbar .spacer { flex: 1; }
+    .toolbar .logo { font-weight: 700; color: var(--blue); font-size: 16px; }
+    
+    /* PREVIEW */
+    .preview-tabs { display: flex; gap: 4px; }
+    .preview-tabs button { background: none; border: none; color: var(--dim); padding: 8px 12px; cursor: pointer; font-size: 12px; border-radius: 4px; }
+    .preview-tabs button:hover { color: var(--text); }
+    .preview-tabs button.active { background: var(--border); color: var(--text); }
+    .preview-frame { flex: 1; background: #fff; border: none; }
+    .code-view { flex: 1; background: #000; color: #0f0; font-family: monospace; font-size: 12px; padding: 12px; overflow: auto; white-space: pre-wrap; display: none; }
+    
+    /* MOBILE */
+    @media (max-width: 768px) {
+      .files-panel { position: fixed; left: -100%; top: 0; bottom: 0; z-index: 100; transition: left 0.3s; }
+      .files-panel.open { left: 0; }
+      .preview-panel { position: fixed; right: -100%; top: 0; bottom: 0; width: 100%; z-index: 100; transition: right 0.3s; }
+      .preview-panel.open { right: 0; }
+    }
+  </style>
 </head>
 <body>
   <div class="app">
-    <header class="header">
-      <button class="icon-btn" onclick="toggleFiles()" title="Files">☰</button>
-      <h1>AI</h1>
-      <div class="header-actions">
-        <select id="modelSelect" class="model-select">
-          <optgroup label="Claude (Anthropic)">
-            <option value="claude-sonnet" selected>Claude Sonnet 4</option>
-            <option value="claude-haiku">Claude Haiku</option>
-          </optgroup>
-          <optgroup label="OpenAI">
-            <option value="gpt-4o">GPT-4o</option>
-            <option value="gpt-4o-mini">GPT-4o Mini</option>
-          </optgroup>
-          <optgroup label="Groq (Fast)">
-            <option value="llama-70b">Llama 3.3 70B</option>
-            <option value="llama-8b">Llama 3.1 8B</option>
-          </optgroup>
-          <optgroup label="Google">
-            <option value="gemini-flash">Gemini 2.5 Flash</option>
-            <option value="gemini-pro">Gemini 2.5 Pro</option>
-          </optgroup>
-        </select>
-        <button class="icon-btn" onclick="showSettings()" title="Settings">⚙</button>
-        <button class="icon-btn" onclick="importProject()" title="Import">↓</button>
-        <button class="icon-btn" onclick="exportProject()" title="Export">↑</button>
-        <button class="icon-btn" onclick="deployProject()" title="Deploy">⚡</button>
-        <button class="icon-btn" onclick="togglePreview()" title="Preview">◧</button>
-      </div>
-    </header>
+    <!-- FILES -->
+    <div class="files-panel" id="filesPanel">
+      <div class="panel-header">FILES <button onclick="addFile()">+</button></div>
+      <div class="file-list" id="fileList"></div>
+    </div>
     
-    <div class="main">
-      <aside class="files-panel" id="filesPanel">
-        <div class="panel-header">
-          <span>Files</span>
-          <button class="icon-btn small" onclick="toggleFiles()">✕</button>
-        </div>
-        <div class="file-list" id="fileList"></div>
-      </aside>
-      
-      <main class="chat-area">
+    <!-- MAIN -->
+    <div class="main-area">
+      <div class="toolbar">
+        <span class="logo">⚡ AI</span>
+        <div class="spacer"></div>
+        <select id="model">
+          <option value="claude-sonnet">Claude Sonnet 4</option>
+          <option value="gpt-4o">GPT-4o</option>
+          <option value="llama-70b">Llama 70B</option>
+          <option value="gemini-flash">Gemini Flash</option>
+        </select>
+        <button onclick="toggleFiles()">☰</button>
+        <button onclick="exportZip()">↓</button>
+        <button onclick="deployProject()">⚡</button>
+        <button onclick="togglePreview()">◧</button>
+      </div>
+      <div class="chat-area">
         <div class="messages" id="messages"></div>
         <div class="input-area">
-          <button class="icon-btn" onclick="attachFile()" title="Attach">📎</button>
-          <input type="text" id="messageInput" placeholder="Ask AI to build something..." onkeydown="if(event.key==='Enter')sendMessage()">
-          <button class="send-btn" onclick="sendMessage()">➤</button>
+          <textarea id="input" placeholder="Ask AI to build something..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+          <button onclick="send()" id="sendBtn">Send</button>
         </div>
-      </main>
-      
-      <aside class="preview-panel" id="previewPanel">
-        <div class="panel-header">
-          <span>Preview</span>
-          <div>
-            <button class="icon-btn small" onclick="expandPreview()" title="Expand">⛶</button>
-            <button class="icon-btn small" onclick="refreshPreview()" title="Refresh">↻</button>
-            <button class="icon-btn small" onclick="togglePreview()">✕</button>
-          </div>
-        </div>
+      </div>
+    </div>
+    
+    <!-- PREVIEW -->
+    <div class="preview-panel" id="previewPanel">
+      <div class="panel-header">
         <div class="preview-tabs">
-          <button class="tab active" onclick="switchTab('live')">Live</button>
-          <button class="tab" onclick="switchTab('html')">HTML</button>
-          <button class="tab" onclick="switchTab('css')">CSS</button>
-          <button class="tab" onclick="switchTab('js')">JS</button>
-          <button class="tab" onclick="switchTab('console')">Console</button>
+          <button class="active" onclick="showTab('live',this)">Live</button>
+          <button onclick="showTab('html',this)">HTML</button>
+          <button onclick="showTab('css',this)">CSS</button>
+          <button onclick="showTab('js',this)">JS</button>
         </div>
-        <div class="preview-content">
-          <iframe id="previewFrame" sandbox="allow-scripts allow-modals"></iframe>
-          <div id="codeView" class="code-view"></div>
-          <div id="consoleView" class="console-view"></div>
-        </div>
-        <div class="error-bar" id="errorBar">
-          <span id="errorText"></span>
-          <button onclick="autoFix()">Auto Fix</button>
-        </div>
-      </aside>
+        <button onclick="togglePreview()">✕</button>
+      </div>
+      <iframe class="preview-frame" id="preview"></iframe>
+      <div class="code-view" id="codeView"></div>
     </div>
   </div>
+
+<script>
+const API = 'https://nebula-api-production.up.railway.app/api';
+let files = { 'index.html': '', 'style.css': '', 'app.js': '' };
+let currentFile = 'index.html';
+
+// RENDER FILES LIST
+function renderFiles() {
+  const list = document.getElementById('fileList');
+  list.innerHTML = Object.keys(files).map(f => 
+    `<div class="file-item ${f===currentFile?'active':''}" onclick="openFile('${f}')">${f.endsWith('.html')?'📄':f.endsWith('.css')?'🎨':'📜'} ${f}</div>`
+  ).join('');
+}
+
+function openFile(name) {
+  currentFile = name;
+  renderFiles();
+}
+
+function addFile() {
+  const name = prompt('File name:');
+  if (name) { files[name] = ''; renderFiles(); }
+}
+
+// CHAT
+function addMsg(role, content) {
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.innerHTML = `<div class="msg-content">${content}</div>`;
+  document.getElementById('messages').appendChild(div);
+  div.scrollIntoView({ behavior: 'smooth' });
+  return div;
+}
+
+async function send() {
+  const input = document.getElementById('input');
+  const msg = input.value.trim();
+  if (!msg) return;
   
-  <div class="modal" id="settingsModal">
-    <div class="modal-content">
-      <h2>Settings</h2>
-      <label>Theme: <select id="themeSelect"><option>Dark</option><option>Light</option></select></label>
-      <button onclick="closeSettings()">Close</button>
-    </div>
-  </div>
+  input.value = '';
+  addMsg('user', msg);
   
-  <script src="app.js"></script>
+  const btn = document.getElementById('sendBtn');
+  btn.disabled = true;
+  
+  const assistantDiv = addMsg('assistant', '<span class="loading">●●●</span>');
+  const contentDiv = assistantDiv.querySelector('.msg-content');
+  
+  try {
+    const model = document.getElementById('model').value;
+    const res = await fetch(`${API}/ai/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: msg }], model })
+    });
+    
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\n');
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ') && !line.includes('[DONE]')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.text) {
+              fullText += data.text;
+              contentDiv.innerHTML = formatResponse(fullText);
+            }
+          } catch {}
+        }
+      }
+    }
+    
+    // Extract code and update preview
+    extractCode(fullText);
+    renderFiles();
+    updatePreview();
+    
+  } catch (err) {
+    contentDiv.innerHTML = `Error: ${err.message}`;
+  }
+  
+  btn.disabled = false;
+}
+
+function formatResponse(text) {
+  // Simple formatting - escape HTML but preserve code blocks
+  return text
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+    .replace(/\n/g, '<br>');
+}
+
+// EXTRACT CODE FROM AI RESPONSE
+function extractCode(text) {
+  // Check if it's a complete HTML document
+  const trimmed = text.trim();
+  if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
+    files['index.html'] = trimmed;
+    return;
+  }
+  
+  // Extract from code blocks
+  const htmlMatch = text.match(/```html\n([\s\S]*?)```/);
+  const cssMatch = text.match(/```css\n([\s\S]*?)```/);
+  const jsMatch = text.match(/```(?:javascript|js)\n([\s\S]*?)```/);
+  
+  if (htmlMatch) files['index.html'] = htmlMatch[1].trim();
+  if (cssMatch) files['style.css'] = cssMatch[1].trim();
+  if (jsMatch) files['app.js'] = jsMatch[1].trim();
+}
+
+// PREVIEW
+function updatePreview() {
+  const iframe = document.getElementById('preview');
+  const html = files['index.html'] || '';
+  
+  // If complete doc, use directly
+  if (html.trim().startsWith('<!DOCTYPE') || html.trim().startsWith('<html')) {
+    iframe.srcdoc = html;
+  } else {
+    // Build from parts
+    const css = files['style.css'] || '';
+    const js = files['app.js'] || '';
+    iframe.srcdoc = `<!DOCTYPE html><html><head><style>${css}</style></head><body>${html}<script>${js}<\/script></body></html>`;
+  }
+}
+
+function showTab(tab, btn) {
+  document.querySelectorAll('.preview-tabs button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  
+  const frame = document.getElementById('preview');
+  const code = document.getElementById('codeView');
+  
+  if (tab === 'live') {
+    frame.style.display = 'block';
+    code.style.display = 'none';
+  } else {
+    frame.style.display = 'none';
+    code.style.display = 'block';
+    code.textContent = files[tab === 'html' ? 'index.html' : tab === 'css' ? 'style.css' : 'app.js'] || '';
+  }
+}
+
+// PANELS
+function toggleFiles() { document.getElementById('filesPanel').classList.toggle('open'); }
+function togglePreview() { document.getElementById('previewPanel').classList.toggle('open'); }
+
+// EXPORT
+function exportZip() {
+  const content = Object.entries(files).map(([n,c]) => `=== ${n} ===\n${c}`).join('\n\n');
+  const blob = new Blob([content], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'project.txt';
+  a.click();
+}
+
+// DEPLOY
+async function deployProject() {
+  alert('Deploy coming soon!');
+}
+
+// INIT
+renderFiles();
+</script>
 </body>
 </html>
