@@ -7,136 +7,124 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- Files Panel (Left) -->
-  <div id="filesPanel" class="panel left-panel">
-    <div class="panel-header">
-      <h3>📁 Files</h3>
-      <button class="icon-btn" onclick="createFile()" title="New File">+</button>
-    </div>
-    <div id="filesList" class="files-list"></div>
-    <div class="panel-actions">
-      <button onclick="gitImport()" title="Import from GitHub">⎇ Git Import</button>
-      <button onclick="runSQL()" title="Run SQL Query">🗄️ Database</button>
-    </div>
-  </div>
-
-  <!-- Main Chat Area -->
-  <div class="main-area">
+  <div id="app">
     <!-- Header -->
-    <header class="header">
-      <button class="icon-btn mobile-only" onclick="toggleFiles()" title="Files">☰</button>
-      <h1>AI</h1>
-      <div class="header-actions">
-        <select id="modelSelect" class="model-select" title="Select AI Model">
-          <option value="auto">🤖 Auto</option>
-          <optgroup label="Claude (Anthropic)">
-            <option value="anthropic/claude-sonnet-4-20250514">Claude Sonnet 4</option>
-            <option value="anthropic/claude-3-haiku-20240307">Claude Haiku (Fast)</option>
+    <header>
+      <div class="header-left">
+        <button id="menuBtn" onclick="toggleFiles()">☰</button>
+        <span class="logo">AI</span>
+      </div>
+      <div class="header-center">
+        <select id="modelSelect">
+          <optgroup label="Claude (Anthropic) ✅">
+            <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+            <option value="claude-3-haiku-20240307">Claude Haiku (Fast)</option>
           </optgroup>
-          <optgroup label="OpenAI">
-            <option value="openai/gpt-4o">GPT-4o</option>
-            <option value="openai/gpt-4o-mini">GPT-4o Mini (Fast)</option>
+          <optgroup label="OpenAI ✅">
+            <option value="gpt-4o">GPT-4o</option>
+            <option value="gpt-4o-mini">GPT-4o Mini (Fast)</option>
+          </optgroup>
+          <optgroup label="Groq ⚠️ Need New Key">
+            <option value="llama-3.1-70b-versatile" disabled>Llama 3.1 70B</option>
+          </optgroup>
+          <optgroup label="Gemini ⚠️ Need New Key">
+            <option value="gemini-2.5-flash" disabled>Gemini 2.5 Flash</option>
           </optgroup>
         </select>
-        <button class="icon-btn" onclick="toggleSettings()" title="Settings">⚙️</button>
-        <button class="icon-btn" onclick="importProject()" title="Import">↓</button>
-        <button class="icon-btn" onclick="exportProject()" title="Export">↑</button>
-        <button class="icon-btn" onclick="deployProject()" title="Deploy">⚡</button>
-        <button class="icon-btn mobile-only" onclick="togglePreview()" title="Preview">◧</button>
+      </div>
+      <div class="header-right">
+        <button onclick="showSettings()" title="Settings">⚙</button>
+        <button onclick="importProject()" title="Import">↓</button>
+        <button onclick="exportProject()" title="Export">↑</button>
+        <button onclick="deployProject()" title="Deploy">⚡</button>
+        <button id="previewBtn" onclick="togglePreview()">◧</button>
       </div>
     </header>
 
-    <!-- Chat Messages -->
-    <div id="chatMessages" class="chat-messages">
-      <div class="message assistant">
-        <div class="message-icon">🤖</div>
-        <div class="message-content">Ready to build! Select a model above and describe what you want to create.</div>
-      </div>
-    </div>
+    <!-- Main Content -->
+    <main>
+      <!-- Files Panel -->
+      <aside id="filesPanel" class="panel-left">
+        <div class="panel-header">
+          <span>Files</span>
+          <button onclick="toggleFiles()">×</button>
+        </div>
+        <div id="filesList"></div>
+      </aside>
 
-    <!-- Input Area -->
-    <div class="input-area">
-      <button class="icon-btn" onclick="attachFile()" title="Attach files">📎</button>
-      <textarea 
-        id="userInput" 
-        placeholder="Ask AI to build something..."
-        rows="1"
-        onkeydown="handleKeyDown(event)"
-        oninput="autoResize(this)"
-      ></textarea>
-      <button class="send-btn" onclick="sendMessage()" title="Send">➤</button>
-    </div>
+      <!-- Chat Area -->
+      <section id="chatArea">
+        <div id="messages"></div>
+        <div id="inputArea">
+          <button id="attachBtn" onclick="attachFile()" title="Attach">📎</button>
+          <textarea id="userInput" placeholder="Ask AI to build something..." rows="1"></textarea>
+          <button id="sendBtn" onclick="sendMessage()">➤</button>
+        </div>
+      </section>
+
+      <!-- Preview Panel -->
+      <aside id="previewPanel" class="panel-right">
+        <div class="panel-header">
+          <div class="preview-tabs">
+            <button class="tab active" data-tab="live">Live</button>
+            <button class="tab" data-tab="html">HTML</button>
+            <button class="tab" data-tab="css">CSS</button>
+            <button class="tab" data-tab="js">JS</button>
+            <button class="tab" data-tab="console">Console</button>
+          </div>
+          <div class="preview-actions">
+            <button onclick="refreshPreview()" title="Refresh">↻</button>
+            <button onclick="expandPreview()" title="Expand">⛶</button>
+            <button onclick="togglePreview()">×</button>
+          </div>
+        </div>
+        <div id="previewContent">
+          <iframe id="previewFrame"></iframe>
+          <pre id="htmlCode" class="code-view" hidden></pre>
+          <pre id="cssCode" class="code-view" hidden></pre>
+          <pre id="jsCode" class="code-view" hidden></pre>
+          <pre id="consoleOutput" class="code-view" hidden></pre>
+        </div>
+        <div id="errorBar" hidden>
+          <span id="errorText"></span>
+          <button onclick="autoFix()">Auto Fix</button>
+        </div>
+      </aside>
+    </main>
   </div>
 
-  <!-- Preview Panel (Right) -->
-  <div id="previewPanel" class="panel right-panel">
-    <div class="panel-header">
-      <h3>Preview</h3>
-      <div class="preview-controls">
-        <button class="icon-btn" onclick="expandPreview()" title="Expand">⛶</button>
-        <button class="icon-btn" onclick="refreshPreview()" title="Refresh">↻</button>
-      </div>
-    </div>
-    <div class="preview-tabs">
-      <button class="tab active" onclick="switchTab('live')">Live</button>
-      <button class="tab" onclick="switchTab('html')">HTML</button>
-      <button class="tab" onclick="switchTab('css')">CSS</button>
-      <button class="tab" onclick="switchTab('js')">JS</button>
-      <button class="tab" onclick="switchTab('console')">Console</button>
-    </div>
-    <div id="previewContent" class="preview-content">
-      <iframe id="previewFrame" sandbox="allow-scripts allow-modals"></iframe>
-      <pre id="codeView" class="code-view" style="display:none"></pre>
-      <div id="consoleView" class="console-view" style="display:none"></div>
-    </div>
-    <div id="errorBar" class="error-bar" style="display:none">
-      <span id="errorText">⚠️ Error detected</span>
-      <button onclick="autoFix()">Auto Fix</button>
-    </div>
-  </div>
-
-  <!-- Settings Modal -->
-  <div id="settingsModal" class="modal" style="display:none">
+  <!-- Modals -->
+  <div id="settingsModal" class="modal" hidden>
     <div class="modal-content">
-      <div class="modal-header">
-        <h3>⚙️ Settings</h3>
-        <button class="icon-btn" onclick="toggleSettings()">×</button>
-      </div>
-      <div class="modal-body">
-        <label>Theme</label>
-        <select id="themeSelect">
-          <option value="dark">Dark (Blue/Black)</option>
-          <option value="light">Light</option>
-        </select>
-        <label>AI Model</label>
-        <select id="settingsModel">
-          <option value="auto">Auto (Smart Selection)</option>
-          <option value="anthropic/claude-sonnet-4-20250514">Claude Sonnet 4 (Best)</option>
-          <option value="anthropic/claude-3-haiku-20240307">Claude Haiku (Fast)</option>
-          <option value="openai/gpt-4o">GPT-4o (Best)</option>
-          <option value="openai/gpt-4o-mini">GPT-4o Mini (Fast)</option>
-        </select>
-        <label>Auto-Fix Errors</label>
-        <select id="autoFixSetting">
-          <option value="prompt">Ask First</option>
-          <option value="auto">Automatic</option>
-          <option value="off">Off</option>
-        </select>
-      </div>
+      <h3>Settings</h3>
+      <label>Theme: <select id="themeSelect"><option>Dark</option><option>Light</option></select></label>
+      <p style="margin-top:15px;color:#888;font-size:12px;">
+        ⚠️ Groq & Gemini keys need refresh.<br>
+        Get new keys from their dashboards.
+      </p>
+      <button onclick="closeModal('settingsModal')">Close</button>
     </div>
   </div>
 
-  <!-- Expanded Preview Modal -->
-  <div id="expandedModal" class="modal expanded-modal" style="display:none">
-    <div class="modal-content full">
-      <div class="modal-header">
-        <h3>Preview</h3>
-        <button class="icon-btn" onclick="closeExpanded()">×</button>
-      </div>
-      <iframe id="expandedFrame" sandbox="allow-scripts allow-modals"></iframe>
+  <div id="importModal" class="modal" hidden>
+    <div class="modal-content">
+      <h3>Import Project</h3>
+      <input type="text" id="importUrl" placeholder="GitHub URL or paste JSON">
+      <button onclick="doImport()">Import</button>
+      <button onclick="closeModal('importModal')">Cancel</button>
     </div>
   </div>
 
+  <div id="deployModal" class="modal" hidden>
+    <div class="modal-content">
+      <h3>Deploy to Vercel</h3>
+      <input type="text" id="deployName" placeholder="Project name">
+      <button onclick="doDeploy()">Deploy</button>
+      <button onclick="closeModal('deployModal')">Cancel</button>
+    </div>
+  </div>
+
+  <input type="file" id="fileInput" hidden multiple>
   <script src="app.js"></script>
 </body>
 </html>
