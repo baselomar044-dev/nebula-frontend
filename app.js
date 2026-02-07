@@ -460,15 +460,22 @@ function formatResponse(text) {
 function extractCodeBlocks(text) {
   const result = { html: null, css: null, js: null };
   
-  // HTML
+  // Check if text is raw HTML (starts with <!DOCTYPE or <html)
+  const trimmed = text.trim();
+  if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
+    result.html = trimmed;
+    return result;
+  }
+  
+  // HTML block
   const htmlMatch = text.match(/```html\n([\s\S]*?)```/);
   if (htmlMatch) result.html = htmlMatch[1].trim();
   
-  // CSS
+  // CSS block
   const cssMatch = text.match(/```css\n([\s\S]*?)```/);
   if (cssMatch) result.css = cssMatch[1].trim();
   
-  // JavaScript
+  // JavaScript block
   const jsMatch = text.match(/```(?:javascript|js)\n([\s\S]*?)```/);
   if (jsMatch) result.js = jsMatch[1].trim();
   
