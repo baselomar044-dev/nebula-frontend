@@ -610,3 +610,39 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-dim);
 }
+
+/* Model Selector Styles */
+.model-select {
+  background: #1a1a2e;
+  color: #fff;
+  border: 1px solid #00d9ff;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  max-width: 150px;
+}
+.model-select:hover {
+  background: #252542;
+}
+.model-select:focus {
+  box-shadow: 0 0 0 2px rgba(0, 217, 255, 0.3);
+}
+.model-select option {
+  background: #1a1a2e;
+  color: #fff;
+}
+.model-select optgroup {
+  background: #0d0d1a;
+  color: #00d9ff;
+  font-weight: bold;
+}
+
+@media (max-width: 768px) {
+  .model-select {
+    max-width: 100px;
+    font-size: 11px;
+    padding: 4px 6px;
+  }
+}
